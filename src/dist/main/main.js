@@ -1540,6 +1540,33 @@ async function initialize() {
                 ? require('path').join(electron_1.app.getPath('userData'), 'perf-stalls.log')
                 : require('path').join(electron_1.app.getPath('userData'), 'updater.log');
         },
+        // v0.5: shard storage providers. Return null/empty when feature is
+        // off (shardStorage === null) so the agent-bridge endpoints return
+        // 503 with a helpful message rather than crashing.
+        getShardStats: () => {
+            if (!shardStorage) return null;
+            const stats = shardStorage.getStats();
+            return {
+                ...stats,
+                budgetGB: appConfig.shardSizeGB || 0,
+                budgetBytes: (appConfig.shardSizeGB || 0) * 1024 * 1024 * 1024,
+                enabled: true,
+            };
+        },
+        getShardBlock: (hashHex) => {
+            if (!shardStorage) return null;
+            const hashBytes = Buffer.from(hashHex, 'hex');
+            const result = shardStorage.get(hashBytes);
+            if (!result) return null;
+            return {
+                daaScore: result.daaScore,
+                sizeBytes: result.sizeBytes,
+                capturedAt: result.capturedAt,
+                // Body is JSON for v0.5 (sql.js storage). Decode for the API
+                // response — clients want the structured block, not a base64 blob.
+                body: JSON.parse(Buffer.from(result.body).toString('utf-8')),
+            };
+        },
     });
     // Start agent bridge
     agentBridge.start();

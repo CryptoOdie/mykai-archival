@@ -160,6 +160,42 @@ class AgentBridge extends events_1.EventEmitter {
                         return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
                     }
                 }
+                // v0.5: shard-storage endpoints.
+                //   GET /shard/stats       — current shard contribution stats
+                //   GET /shard/block/:hash — retrieve one block by hex hash
+                // Both return { ok: false, error: 'Shard storage not enabled' } when
+                // the user has shardSizeGB == 0 (feature off). 200 with data otherwise.
+                if (pathname === '/shard/stats') {
+                    if (!this.providers.getShardStats) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Shard storage not enabled (set shardSizeGB > 0 in Settings)' }));
+                    }
+                    try {
+                        const stats = this.providers.getShardStats();
+                        return this._respond(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: true, ...stats }));
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                }
+                if (pathname.startsWith('/shard/block/')) {
+                    if (!this.providers.getShardBlock) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Shard storage not enabled' }));
+                    }
+                    const hashHex = pathname.slice('/shard/block/'.length);
+                    if (!/^[0-9a-fA-F]{64}$/.test(hashHex)) {
+                        return this._respond(res, 400, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Invalid hash format — expect 32-byte hex' }));
+                    }
+                    try {
+                        const block = this.providers.getShardBlock(hashHex);
+                        if (!block) {
+                            return this._respond(res, 404, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Block not in local shard' }));
+                        }
+                        return this._respond(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: true, daaScore: block.daaScore, sizeBytes: block.sizeBytes, capturedAt: block.capturedAt, body: block.body }));
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                }
                 return this._respond(res, 404, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Not found' }));
             }
             // ─── POST routes ───────────────────────────────────────────────
