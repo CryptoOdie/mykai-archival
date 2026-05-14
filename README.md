@@ -1,10 +1,27 @@
-# MyKAI Archival
+# MyKAI Node + Archival Contribution
 
-A sovereign Kaspa archival node host, building toward a distributed peer-to-peer shard network that **supplements** existing archival infrastructure (kaspa.org/explorer, kaspadbase.com, Kasplex) with community-driven redundancy.
+A fork of [MyKAI Node v0.3.8](https://github.com/KasMapApp/MyKAI-Node-Public) (MIT, with author permission) that adds an **optional archival contribution feature**: your normal Kaspa node can also help preserve Kaspa's history.
 
-**Status:** v0.4 pre-release. Forked from [MyKAI Node v0.3.8](https://github.com/KasMapApp/MyKAI-Node-Public) (MIT) with author permission.
+**Status:** v0.5 pre-release.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for what's new in v0.4.
+See [`CHANGELOG.md`](CHANGELOG.md) for the full v0.4 + v0.5 release notes.
+
+## What's new
+
+### v0.5 — Archival contribution feature (optional)
+
+A new section in Settings → Storage: **"Help preserve Kaspa history (optional)"**. Set a number of GB to contribute; your node will catch each new block from kaspad just before it would be pruned and hold it in a local store. Set 0 to keep the feature off — MyKAI Node still works exactly as before.
+
+- Default: 0 GB (feature off, behavior unchanged from v0.4)
+- 50 GB: small contributor, helpful for recent blocks
+- 200 GB: meaningful contributor
+- 1000+ GB: power-user / dedicated archive operator
+
+The feature uses pruned kaspad + a lightweight in-process module — much lighter than running kaspad's `--archival` mode directly. Same node, just a small storage helper on the side.
+
+### v0.4 — Sovereign-fork foundation
+
+Telemetry strictly opt-in. Remote identity-recovery disabled. FluxCloud cloud-monitor removed. Pause-on-battery for laptop users. Archival/retention mode flags exposed via Settings (advanced).
 
 ## What this is
 

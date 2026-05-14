@@ -1,5 +1,75 @@
 # Changelog
 
+## v0.5.0 — Archival Contribution Feature (unreleased)
+
+The big one. MyKAI Node now optionally helps preserve Kaspa's history.
+
+### New: archival contribution as an optional feature
+
+A new Settings → Storage section: **"Help preserve Kaspa history (optional)"** with a single number input — `Contribute X GB`. Default is 0 (feature off, identical behavior to v0.4). When set to any positive value:
+
+- A background **shard storage module** subscribes to the local pruned kaspad's chain events
+- For each new accepted block, captures the body into a local SQLite database (`<userData>/shard-storage.db`)
+- Holds blocks until they fall outside the user-configured disk budget
+- Rolls oldest blocks out as new blocks arrive at the chain tip
+- Captures happen via the kaspad wRPC notification stream — **no extra internet traffic** (kaspad already downloaded the block; we just write it to our own store)
+
+### Why this matters
+
+Kaspa's pruning point is at ~30 hours post-Crescendo. Every block older than that gets discarded by default pruned nodes. The archival contribution feature lets your normal MyKAI Node *catch* those blocks before they disappear and *hold* them for as long as your disk budget allows. Your node now contributes to a network-wide preservation of Kaspa history.
+
+In v0.6+, the same shard module will expose the captured blocks to other MyKAI peers via libp2p, forming a distributed archival mesh. v0.5 is the local-only foundation.
+
+### Architecture
+
+- **One pruned kaspad** (as in v0.4) — your normal Kaspa node, ~4 GB RAM, ~30 GB disk
+- **MyKAI shard storage module** (new) — `src/dist/main/shard-storage.js`, in-process, ~0.5-2 GB extra RAM depending on pinset size, additional disk = your configured GB
+
+This is NOT a separate archival kaspad. It's a lightweight Node module sitting next to pruned kaspad in the same Electron process.
+
+### Storage backend
+
+- `sql.js` (pure JS / WASM SQLite) — no native build toolchain required
+- ~3× slower than native SQLite, but fully adequate at Kaspa's 10 BPS write rate
+- Migration to native `better-sqlite3` planned for v0.6 alongside the libp2p sidecar
+
+### Dashboard widget
+
+When the feature is enabled, the main dashboard shows a new card:
+- Blocks held
+- Disk used (formatted: e.g., "1.2 GB")
+- Budget (e.g., "50 GB")
+- Captures per minute
+- DAA range covered
+
+The card is hidden entirely when the feature is off — no visual clutter for users who don't opt in.
+
+### New IPC + HTTP endpoints
+
+- IPC: `shard:stats` returns the current contribution state
+- HTTP (agent-bridge): `GET /shard/stats` and `GET /shard/block/:hash`
+- Both return 503 with a helpful message when the feature is off
+
+### Internal changes
+
+- `src/dist/main/shard-storage.js` — NEW (~330 lines): the storage class
+- `src/dist/main/rpc-monitor.js` — block-added event extended with `daaScore` and `rawBlock` (non-breaking — existing consumers ignore new fields)
+- `src/dist/main/main.js` — module init in `initialize()`, capture subscriber, periodic prune timer, cleanup on quit
+- `src/dist/main/config-store.js` — `shardSizeGB` field (default 0)
+- `src/dist/main/agent-bridge.js` — `/shard/*` endpoints
+- `src/dist/main/ipc-handlers.js` — `shard:stats` channel
+- `src/dist/preload/preload.js` — `window.mykai.shard.stats()`
+- `src/src/renderer/index.html` — `#shard-card` widget, contribution slider in Settings
+- `src/src/renderer/app.js` — `refreshShardCard()`, `updateShardSizeHint()`, save handler
+
+### Known caveats
+
+- **Restart required** after changing `shardSizeGB` from 0 to positive or vice versa. The module starts/stops at app launch based on the config value at that moment.
+- **JSON storage overhead**: blocks are stored as JSON strings (sql.js convention). ~30% larger than Borsh-encoded binary. Migrate to native SQLite + Borsh in v0.6.
+- **Local-only in v0.5**: no P2P sharing yet. Your captured blocks help YOUR node's MCP server and any local consumers. Sharing across MyKAI peers ships in v0.6 with the libp2p sidecar.
+
+---
+
 ## v0.4.0 — Archival Mode + Sovereign Fork (unreleased)
 
 Forked from MyKAI Node v0.3.8 (MIT, KasMapApp). Author permission granted 2026-05-14.
