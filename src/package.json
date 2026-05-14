@@ -1,14 +1,22 @@
 {
-  "name": "mykai-node",
-  "version": "0.3.8",
-  "description": "One-click Kaspa node for sovereign blockchain access",
+  "name": "mykai-archival",
+  "version": "0.4.0-dev",
+  "description": "Sovereign Kaspa archival node host (fork of MyKAI Node)",
   "main": "dist/main/main.js",
-  "author": "MyKAI",
+  "author": "MyKAI Archival Contributors",
   "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:debug": "electron --inspect=5858 .",
+    "build": "electron-builder --dir"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.102.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.3",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
   }
 }

@@ -10,5 +10,8 @@ out/
 release/
 _reference/v0.3.8/kaspad.exe
 _reference/v0.3.8/ks_bridge.exe
+# Dev-mode binaries — copied from _reference on setup, kept out of git
+src/resources/kaspad.exe
+src/resources/ks_bridge.exe
 .vscode/
 .idea/
