@@ -462,7 +462,10 @@ async function initialize() {
     // Disk monitor — auto-pauses kaspad when free space drops below 5 GB,
     // resumes at 10 GB. Protects against the fill-then-corrupt pattern that
     // leaves users stuck in UTXO-rebuild loops.
-    diskMonitor = new disk_monitor_1.DiskMonitor(appConfig.dataDir);
+    // v0.4: storage mode passed so thresholds scale (pruned 5/10 GB,
+    // retention 20/40 GB, archival 50/100 GB). DiskMonitor.setStorageMode()
+    // can hot-update from ipc-handlers when mode changes.
+    diskMonitor = new disk_monitor_1.DiskMonitor(appConfig.dataDir, appConfig.nodeStorageMode || 'pruned');
     diskMonitor.on('pause-needed', async (info) => {
         const freeGB = (info.freeBytes / 1_073_741_824).toFixed(1);
         mainWindow?.webContents.send('node:activity', `Your disk is almost full (${freeGB} GB free) — pausing your node to protect it`);
@@ -1349,6 +1352,9 @@ async function initialize() {
         getHeartbeatData,
         agentBridge,
         kasmapRealtime,
+        // v0.4: pass diskMonitor so config:set can hot-update thresholds
+        // when storage mode changes (pruned 5/10 GB → archival 50/100 GB etc.).
+        diskMonitor,
     });
     // Runtime diagnostic — exposes main-process memory, per-emitter listener
     // counts, and long-lived connection state. Baked into the diagnostic

@@ -35,18 +35,41 @@ exports.getFreeBytes = getFreeBytes;
 exports.getTotalBytes = getTotalBytes;
 const fs_1 = __importDefault(require("fs"));
 const events_1 = require("events");
-const PAUSE_THRESHOLD_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
-const RESUME_THRESHOLD_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB (hysteresis)
+// v0.4: thresholds scale with storage mode. Pruned needs ~30 GB headroom;
+// archival can write tens of GB in burst during pruning-point advance.
+// Pause threshold is the floor (below this we stop kaspad); resume threshold
+// adds hysteresis to prevent flapping.
+const THRESHOLDS_BY_MODE = {
+    pruned:    { pauseGB: 5,  resumeGB: 10 },
+    retention: { pauseGB: 20, resumeGB: 40 },
+    archival:  { pauseGB: 50, resumeGB: 100 },
+};
+const GB = 1024 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 5 * 60_000; // 5 minutes
 class DiskMonitor extends events_1.EventEmitter {
     dataDir;
+    storageMode;
     timer = null;
     _state = 'ok';
     _lastFreeBytes = 0;
     _lastCheckAt = 0;
-    constructor(dataDir) {
+    constructor(dataDir, storageMode = 'pruned') {
         super();
         this.dataDir = dataDir;
+        this.storageMode = storageMode;
+    }
+    /** Hot-update storage mode without restarting the monitor.
+     *  Called from ipc-handlers.js::config:set when nodeStorageMode changes. */
+    setStorageMode(mode) {
+        const valid = ['pruned', 'retention', 'archival'];
+        if (valid.includes(mode)) {
+            this.storageMode = mode;
+        }
+    }
+    /** Current pause/resume thresholds for the active storage mode. */
+    getThresholds() {
+        const t = THRESHOLDS_BY_MODE[this.storageMode] || THRESHOLDS_BY_MODE.pruned;
+        return { pauseBytes: t.pauseGB * GB, resumeBytes: t.resumeGB * GB };
     }
     /** Current free-bytes snapshot (from the most recent check). */
     get lastFreeBytes() { return this._lastFreeBytes; }
@@ -87,13 +110,14 @@ class DiskMonitor extends events_1.EventEmitter {
         this._lastCheckAt = Date.now();
         if (free <= 0)
             return; // couldn't read; don't act on bad data
-        if (this._state === 'ok' && free < PAUSE_THRESHOLD_BYTES) {
+        const { pauseBytes, resumeBytes } = this.getThresholds();
+        if (this._state === 'ok' && free < pauseBytes) {
             this._state = 'paused';
-            this.emit('pause-needed', { freeBytes: free, thresholdBytes: PAUSE_THRESHOLD_BYTES });
+            this.emit('pause-needed', { freeBytes: free, thresholdBytes: pauseBytes, storageMode: this.storageMode });
         }
-        else if (this._state === 'paused' && free > RESUME_THRESHOLD_BYTES) {
+        else if (this._state === 'paused' && free > resumeBytes) {
             this._state = 'ok';
-            this.emit('resume-ok', { freeBytes: free });
+            this.emit('resume-ok', { freeBytes: free, storageMode: this.storageMode });
         }
     }
 }

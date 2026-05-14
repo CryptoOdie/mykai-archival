@@ -188,6 +188,10 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
         // then let firewall rules reflect the new state.
         const oldNetwork = config.get('network');
         const oldStratumBind = config.get('stratumBind');
+        // v0.4: snapshot storage-mode state so we can fire the
+        // config:storage-mode-changed IPC event and rotate the marker file.
+        const oldNodeStorageMode = config.get('nodeStorageMode') || 'pruned';
+        const oldRetentionDays = config.get('retentionDays') || 0;
         config.setAll(updates);
         if (updates.launchOnStartup !== undefined) {
             electron_1.app.setLoginItemSettings({
@@ -222,6 +226,57 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
             }
             else if (!isLanOrAll && wasLanOrAll) {
                 await (0, firewall_1.requestRemovePort)(mainWin, firewall_1.FW_MINING.ruleName, 'miners on your LAN');
+            }
+        }
+        // v0.4: storage-mode change handling.
+        // - Hot-update DiskMonitor's thresholds so they reflect the new mode immediately.
+        // - Write a marker file so we can detect drift between config and kaspad's
+        //   persisted is_archival_node flag on next boot (defends against the
+        //   rusty-kaspa set_is_archival_node WriteBatch bug; see upstream PR-01).
+        // - Emit config:storage-mode-changed IPC so the renderer can show the right
+        //   confirmation dialog and trigger a kaspad restart.
+        const newNodeStorageMode = config.get('nodeStorageMode') || 'pruned';
+        const newRetentionDays = config.get('retentionDays') || 0;
+        const modeChanged = newNodeStorageMode !== oldNodeStorageMode;
+        const retentionChanged = newRetentionDays !== oldRetentionDays;
+        if (modeChanged || retentionChanged) {
+            if (opts?.diskMonitor && modeChanged) {
+                opts.diskMonitor.setStorageMode(newNodeStorageMode);
+            }
+            // Marker file: written to userData so it survives kaspad's datadir
+            // wipes. Defends against the upstream set_is_archival_node bug.
+            try {
+                const markerPath = require('path').join(electron_1.app.getPath('userData'), 'mykai-storage-mode.json');
+                const marker = {
+                    schemaVersion: 1,
+                    requestedAt: new Date().toISOString(),
+                    requestedMode: newNodeStorageMode,
+                    previousMode: oldNodeStorageMode,
+                    requestedRetentionDays: newRetentionDays,
+                    previousRetentionDays: oldRetentionDays,
+                    note: 'Defends against upstream rusty-kaspa set_is_archival_node WriteBatch non-commit bug. See docs/upstream-prs/PR-01.',
+                };
+                require('fs').writeFileSync(markerPath, JSON.stringify(marker, null, 2), 'utf-8');
+            }
+            catch (err) {
+                console.warn('[config:set] could not write storage-mode marker file:', err?.message || err);
+            }
+            // Pruned → archival requires kaspad to actually re-sync historical
+            // data (which we lost when running pruned). Renderer should warn
+            // and confirm before persisting.
+            // Archival → pruned does NOT require resync (kaspad will start
+            // pruning the existing data on the next CSV cycle).
+            // Retention changes are always non-destructive.
+            const requiresFullResync = oldNodeStorageMode !== 'archival' && newNodeStorageMode === 'archival';
+            if (mainWin) {
+                mainWin.webContents.send('config:storage-mode-changed', {
+                    oldMode: oldNodeStorageMode,
+                    newMode: newNodeStorageMode,
+                    oldRetentionDays,
+                    newRetentionDays,
+                    requiresFullResync,
+                    requiresKaspadRestart: true,
+                });
             }
         }
         return config.getAll();
