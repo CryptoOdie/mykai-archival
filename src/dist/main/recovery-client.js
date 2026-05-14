@@ -60,53 +60,29 @@ exports.RecoveryError = RecoveryError;
  *  failure mode — caller should catch and surface a friendly message
  *  to the user. */
 function lookupByKey(key) {
+    // v0.4: remote recovery lookup is DISABLED in this sovereign-fork.
+    //
+    // The original v0.3.x flow phoned home to https://mykai.dev/api/recover-by-key
+    // (a Supabase-backed identity registry) when a user pasted an accountKey
+    // and no local match was found. This is anti-sovereign-ethos: identity
+    // recovery should not depend on a remote registry.
+    //
+    // Local recovery via Documents\MyKAI\identity_acc_*.json files is the
+    // primary mechanism and works without network access (see
+    // identity-backup.js for the architectural background). The caller in
+    // ipc-handlers.js::recovery:lookup already tries local first and falls
+    // back here — we just refuse remote lookups, returning a clear error.
+    //
+    // To re-enable remote lookups in a future build, restore the HTTPS
+    // request body from git history at commit pre-Phase-D, but only behind
+    // explicit opt-in config (sovereign-fork ethos).
     if (!exports.KEY_REGEX.test(key)) {
         return Promise.reject(new RecoveryError('invalid-format', 'Key must be in the form acc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx or node_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (32 hex characters after the prefix).'));
     }
-    return new Promise((resolve, reject) => {
-        const body = JSON.stringify({ key });
-        const url = new URL(RECOVERY_URL);
-        const req = https_1.default.request({
-            method: 'POST',
-            hostname: url.hostname,
-            port: url.port || 443,
-            path: url.pathname,
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                'User-Agent': 'MyKAI-Node-Recovery',
-                'Accept': 'application/json',
-            },
-            timeout: 15000,
-            agent: http_agent_1.sharedHttpsAgent,
-        }, (res) => {
-            (0, http_body_1.readBody)(res, 1_000_000)
-                .then((raw) => {
-                if (res.statusCode === undefined || res.statusCode < 200 || res.statusCode >= 300) {
-                    reject(new RecoveryError('http', `Server responded ${res.statusCode}`, res.statusCode));
-                    return;
-                }
-                try {
-                    const parsed = JSON.parse(raw);
-                    if (!Array.isArray(parsed?.matches)) {
-                        reject(new RecoveryError('parse', 'Server response missing `matches` array.'));
-                        return;
-                    }
-                    resolve(parsed);
-                }
-                catch (err) {
-                    reject(new RecoveryError('parse', `Could not parse server response: ${err.message}`));
-                }
-            })
-                .catch((err) => reject(new RecoveryError('network', err?.message ?? String(err))));
-        });
-        req.on('error', (err) => reject(new RecoveryError('network', err.message)));
-        req.on('timeout', () => {
-            req.destroy();
-            reject(new RecoveryError('timeout', 'Lookup timed out after 15 seconds. Check your internet connection and try again.'));
-        });
-        req.write(body);
-        req.end();
-    });
+    return Promise.reject(new RecoveryError(
+        'remote-disabled',
+        'Remote recovery lookup is disabled in this sovereign-fork build. Local recovery via Documents\\MyKAI\\identity_acc_<key>.json still works. If you have a key but no local file, you cannot recover via the network — please use a backup of identity.json if you have one.',
+        404
+    ));
 }
 //# sourceMappingURL=recovery-client.js.map

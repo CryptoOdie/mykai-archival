@@ -2,7 +2,9 @@
 
 A sovereign Kaspa archival node host, building toward a distributed peer-to-peer shard network that **supplements** existing archival infrastructure (kaspa.org/explorer, kaspadbase.com, Kasplex) with community-driven redundancy.
 
-**Status:** Phase 0 (pre-flight). Forked from [MyKAI Node v0.3.8](https://github.com/KasMapApp/MyKAI-Node-Public) (MIT) with author permission.
+**Status:** v0.4 pre-release. Forked from [MyKAI Node v0.3.8](https://github.com/KasMapApp/MyKAI-Node-Public) (MIT) with author permission.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for what's new in v0.4.
 
 ## What this is
 

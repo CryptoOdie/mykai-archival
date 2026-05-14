@@ -44,7 +44,9 @@ const firewall_1 = require("./firewall");
 const http_body_1 = require("./util/http-body");
 const http_agent_1 = require("./util/http-agent");
 const https_1 = __importDefault(require("https"));
-const cloud_node_manager_1 = require("./cloud-node-manager");
+// cloud-node-manager removed in v0.4 sovereign-fork. The FluxCloud-specific
+// mykai-monitor.sh that phoned home is no longer shipped; cloud deployment
+// is treated as a separate concern.
 const network_utils_1 = require("./network-utils");
 // Passive renderer liveness — touched on every IPC invoke from the renderer.
 // The renderer's own setInterval polls (5s health, 5s mining, 2min cloud)
@@ -613,54 +615,23 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
         }
         return { valid: true };
     });
-    // --- Cloud node management ---
-    const cloudManager = new cloud_node_manager_1.CloudNodeManager(config);
+    // --- Cloud node management (DISABLED in sovereign-fork v0.4) ---
+    //
+    // The v0.3.x flow generated a FluxCloud-specific mykai-monitor.sh script
+    // that phoned home to https://mykai.dev/api/network/contribute. We don't
+    // ship that script anymore and the cloud:status endpoint hit a remote
+    // Supabase-backed registry. Both are anti-sovereign-ethos.
+    //
+    // We keep the IPC channels for backward-compat (renderer may still call
+    // them), but they return disabled-state responses. Calling code in
+    // renderer/app.js renderMyNodesTable handles empty cloudNodes already.
     track('cloud:generate-script', () => {
-        try {
-            const result = cloudManager.generateAndSave();
-            return { ok: true, filePath: result.filePath, accountKey: result.accountKey };
-        }
-        catch (err) {
-            return { ok: false, error: err.message };
-        }
+        return { ok: false, error: 'Cloud-node script generation is disabled in this sovereign-fork build. Cloud deployment is a separate concern; consider running MyKAI on your own server via reproducible builds.' };
     });
     track('cloud:account-key', () => config.getAccountKey());
-    track('cloud:status', async () => {
-        const accountKey = config.getAccountKey();
-        if (!accountKey)
-            return { ok: false, nodes: [] };
-        try {
-            const nodes = await fetchCloudStatus(accountKey);
-            return { ok: true, nodes };
-        }
-        catch (err) {
-            return { ok: false, nodes: [], error: err.message };
-        }
-    });
-}
-/** Fetch all node statuses from Insights for a given account key */
-function fetchCloudStatus(accountKey) {
-    return new Promise((resolve, reject) => {
-        const url = `https://mykai.dev/api/nodes/status?accountKey=${encodeURIComponent(accountKey)}`;
-        const req = https_1.default.get(url, { timeout: 10000, agent: http_agent_1.sharedHttpsAgent }, async (res) => {
-            try {
-                const body = await (0, http_body_1.readBody)(res);
-                try {
-                    const data = JSON.parse(body);
-                    resolve(Array.isArray(data) ? data : data.nodes || []);
-                }
-                catch {
-                    resolve([]);
-                }
-            }
-            catch (err) {
-                reject(err);
-            }
-        });
-        req.on('error', reject);
-        // Explicit destroy on timeout — without this the socket can dangle
-        // in CLOSE_WAIT state and eventually exhaust file descriptors.
-        req.on('timeout', () => { req.destroy(new Error('Timeout')); });
+    track('cloud:status', () => {
+        // Always return empty cloud nodes — we don't phone home to discover them.
+        return { ok: true, nodes: [] };
     });
 }
 //# sourceMappingURL=ipc-handlers.js.map

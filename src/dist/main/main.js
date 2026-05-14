@@ -784,6 +784,40 @@ async function initialize() {
     electron_1.powerMonitor.on('resume', () => {
         mainWindow?.webContents.send('node:activity', 'System resumed from sleep.');
     });
+    // v0.4: pause-on-battery — amateur-safe default from research.
+    // The single biggest amateur quit-trigger is "MyKAI drained my battery on a
+    // flight." On battery, we stop kaspad cleanly; on AC, we resume.
+    // User can override via Settings > Power (deferred to v0.5 UI).
+    //
+    // Persist the pause-reason in-memory only — we don't want a reboot to
+    // miss the "was on battery" state. On startup we check power state in
+    // the initialize() flow.
+    let _autoPausedForBattery = false;
+    const handleBatteryStateChange = async () => {
+        try {
+            const onBattery = electron_1.powerMonitor.isOnBatteryPower?.();
+            if (onBattery && !_autoPausedForBattery && manager.state !== 'stopped') {
+                _autoPausedForBattery = true;
+                mainWindow?.webContents.send('node:activity', '🔋 On battery power — pausing kaspad to save battery. Will resume on AC.');
+                await manager.stop();
+            }
+            else if (!onBattery && _autoPausedForBattery) {
+                _autoPausedForBattery = false;
+                mainWindow?.webContents.send('node:activity', '⚡ AC power detected — resuming kaspad.');
+                await manager.start();
+            }
+        }
+        catch (err) {
+            // Don't crash on power-state probe failures (some Linux configs lack
+            // the upower interface). Just log and skip — user can manually pause.
+            console.warn('[battery] power state handler failed:', err?.message || err);
+        }
+    };
+    electron_1.powerMonitor.on('on-battery', handleBatteryStateChange);
+    electron_1.powerMonitor.on('on-ac', handleBatteryStateChange);
+    // Initial check at startup so a user who launches on battery doesn't burn
+    // through their charge before the first state-change fires.
+    setTimeout(handleBatteryStateChange, 10_000);
     // --- Raw event relay → monitoring buffer (dumb pipe to Insights) ---
     // blockBatchStats removed — Insights derives from per-block parentCount + txCount
     // Red blocks from GHOSTDAG coloring — authoritative from kaspad's
