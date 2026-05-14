@@ -152,6 +152,32 @@
       <div class="stat-card" title="The network's heartbeat counter. It ticks up with every new layer of blocks. The higher it is, the further along the blockchain."><div class="stat-label">DAA Score <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-daa">0</div></div>
     </div>
 
+    <!-- v0.5: Shard contribution card (visible when shardSizeGB > 0) -->
+    <div id="shard-card" class="hidden">
+      <div id="shard-card-header" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-secondary,#1a1a1a);border-bottom:1px solid var(--border,#2a2a2a);">
+        <span class="shard-card-title" style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);">ARCHIVAL CONTRIBUTION</span>
+        <span id="shard-card-status" style="font-size:0.85em;color:var(--text-secondary);">—</span>
+      </div>
+      <div id="shard-card-body" style="padding:10px 14px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+        <div>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Blocks held</div>
+          <div id="shard-stat-blocks" style="font-size:1.2em;font-weight:600;">0</div>
+        </div>
+        <div>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Disk used</div>
+          <div id="shard-stat-used" style="font-size:1.2em;font-weight:600;">0 MB</div>
+        </div>
+        <div>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Budget</div>
+          <div id="shard-stat-budget" style="font-size:1.2em;font-weight:600;">0 GB</div>
+        </div>
+        <div>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Captures / min</div>
+          <div id="shard-stat-rate" style="font-size:1.2em;font-weight:600;">0</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Mining Status Card (visible when mining is configured) -->
     <div id="mining-card" class="hidden">
       <div id="mining-card-header">

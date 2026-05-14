@@ -279,6 +279,51 @@ window.mykai.node.onUtxoResync((data) => handleUtxoResync(data));
 window.mykai.finality.onUpdate((stats) => updateFinalityStats(stats));
 window.mykai.finality.onChainFlip((flip) => handleChainFlip(flip));
 
+// v0.5: shard contribution dashboard widget. Polls shard:stats every 10s.
+// Hides entirely when feature is off (stats === null).
+function formatBytesShort(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v < 10 ? v.toFixed(1) + ' ' + units[i] : Math.round(v) + ' ' + units[i];
+}
+async function refreshShardCard() {
+  try {
+    const stats = await window.mykai.shard?.stats?.();
+    const card = document.getElementById('shard-card');
+    if (!card) return;
+    if (!stats || !stats.enabled) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    document.getElementById('shard-stat-blocks').textContent =
+      (stats.blockCount || 0).toLocaleString();
+    document.getElementById('shard-stat-used').textContent =
+      formatBytesShort(stats.totalBytes || 0);
+    document.getElementById('shard-stat-budget').textContent =
+      (stats.budgetGB || 0) + ' GB';
+    document.getElementById('shard-stat-rate').textContent =
+      String(stats.capturedLast60s || 0);
+    // Status line: blocks/min + oldest-block age hint when we have data
+    let status = '';
+    if (stats.blockCount > 0 && stats.oldestDaa != null && stats.newestDaa != null) {
+      const range = stats.newestDaa - stats.oldestDaa;
+      status = `DAA range: ${stats.oldestDaa.toLocaleString()} → ${stats.newestDaa.toLocaleString()} (${range.toLocaleString()} span)`;
+    } else if (stats.blockCount === 0) {
+      status = 'waiting for kaspad…';
+    }
+    document.getElementById('shard-card-status').textContent = status;
+  } catch (err) {
+    // Silent — feature might not be wired yet on older main process versions.
+  }
+}
+// Immediate poll on load, then every 10s.
+refreshShardCard();
+setInterval(refreshShardCard, 10_000);
+
 // v0.4: storage-mode change handler. Main process fires this from
 // ipc-handlers.js after config:set persists. Renderer shows the right
 // confirmation dialog (especially for the destructive pruned->archival

@@ -1454,6 +1454,18 @@ async function initialize() {
         // v0.4: pass diskMonitor so config:set can hot-update thresholds
         // when storage mode changes (pruned 5/10 GB → archival 50/100 GB etc.).
         diskMonitor,
+        // v0.5: closure so ipc-handlers can read fresh shard stats on demand.
+        // Returns null when feature off — renderer hides the widget.
+        getShardStats: () => {
+            if (!shardStorage) return null;
+            const stats = shardStorage.getStats();
+            return {
+                ...stats,
+                budgetGB: appConfig.shardSizeGB || 0,
+                budgetBytes: (appConfig.shardSizeGB || 0) * 1024 * 1024 * 1024,
+                enabled: true,
+            };
+        },
     });
     // Runtime diagnostic — exposes main-process memory, per-emitter listener
     // counts, and long-lived connection state. Baked into the diagnostic

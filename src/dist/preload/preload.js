@@ -57,6 +57,11 @@ electron_1.contextBridge.exposeInMainWorld('mykai', {
          *  trigger kaspad restart. */
         onStorageModeChanged: (cb) => { electron_1.ipcRenderer.on('config:storage-mode-changed', (_e, info) => cb(info)); },
     },
+    /** v0.5: shard storage status. Polled by the dashboard widget every 10s.
+     *  Returns null when feature is off (shardSizeGB == 0). */
+    shard: {
+        stats: () => electron_1.ipcRenderer.invoke('shard:stats'),
+    },
     recovery: {
         /** Look up nodes by accountKey or nodeId. Returns
          *  { ok: true, matches: [...] } or { ok: false, code, error }.

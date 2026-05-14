@@ -180,6 +180,13 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
     }));
     // KasMap
     track('kasmap:status', () => kasmap.status);
+    // v0.5: shard storage stats. Returns null when feature off so renderer
+    // can hide the dashboard widget entirely. opts.getShardStats is wired
+    // by main.js with the same closure that agent-bridge uses.
+    track('shard:stats', () => {
+        if (!opts?.getShardStats) return null;
+        return opts.getShardStats();
+    });
     track('kasmap:verify', async (_event, token) => {
         return await kasmap.verify(token);
     });
