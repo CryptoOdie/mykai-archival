@@ -152,10 +152,10 @@
       <div class="stat-card" title="The network's heartbeat counter. It ticks up with every new layer of blocks. The higher it is, the further along the blockchain."><div class="stat-label">DAA Score <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-daa">0</div></div>
     </div>
 
-    <!-- v0.5: Shard contribution card (visible when shardSizeGB > 0) -->
+    <!-- v0.5: Archive Pool contribution card (visible when shardSizeGB > 0) -->
     <div id="shard-card" class="hidden">
       <div id="shard-card-header" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-secondary,#1a1a1a);border-bottom:1px solid var(--border,#2a2a2a);">
-        <span class="shard-card-title" style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);">ARCHIVAL CONTRIBUTION</span>
+        <span class="shard-card-title" style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);">ARCHIVE POOL</span>
         <span id="shard-card-status" style="font-size:0.85em;color:var(--text-secondary);">—</span>
       </div>
       <div id="shard-card-body" style="padding:10px 14px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
@@ -362,17 +362,17 @@
         Archival mode is disabled on testnet because testnet resets can permanently delete archival data. Switch to mainnet to use archival.
       </div>
 
-      <!-- v0.5: archival contribution slider — the new "feature" of MyKAI Node -->
-      <h3 style="margin-top:24px;">Help preserve Kaspa history (optional)</h3>
+      <!-- v0.5: Archive Pool — pooled distributed archival storage feature -->
+      <h3 style="margin-top:24px;">Archive Pool</h3>
       <div class="setting-hint" style="margin-top:0;">
-        Your node already validates the chain. Optionally, donate some disk space to help store Kaspa's history — your node will catch blocks just before they would be pruned, hold them, and serve them back to others who need them. Default: 0 GB (feature off). MyKAI Node still works perfectly without it.
+        Pool your disk with other MyKAI users to keep Kaspa's history alive. Your node catches blocks before kaspad prunes them, holds them in a local store, and serves them to other pool participants. Optional — 0 GB = not in the pool. MyKAI Node works as a normal pruned Kaspa node either way.
       </div>
-      <div class="setting-row" title="How much disk space to commit to the distributed archive. 0 = feature off. Recommended: 50 GB for laptops, 200 GB for desktops, 1000+ GB for dedicated archival operators.">
+      <div class="setting-row" title="Disk space to contribute to the pool. 0 = not joined. Typical: 50 GB laptop, 200 GB desktop, 1000+ GB dedicated archive operator.">
         <label>Contribute (GB)</label>
         <input type="number" id="setting-shard-size-gb" min="0" max="20000" step="10" value="0">
       </div>
       <div class="setting-hint" id="shard-size-hint">
-        0 GB = feature off (your node still helps Kaspa by being a normal node).
+        0 GB = not in the pool. Your node still validates the chain normally.
       </div>
 
       <div class="setting-row" title="Where the blockchain data is stored on your computer.">

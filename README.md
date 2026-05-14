@@ -8,16 +8,16 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full v0.4 + v0.5 release notes.
 
 ## What's new
 
-### v0.5 — Archival contribution feature (optional)
+### v0.5 — Archive Pool participation (optional)
 
-A new section in Settings → Storage: **"Help preserve Kaspa history (optional)"**. Set a number of GB to contribute; your node will catch each new block from kaspad just before it would be pruned and hold it in a local store. Set 0 to keep the feature off — MyKAI Node still works exactly as before.
+A new section in Settings → Storage: **"Archive Pool"**. Set a number of GB to contribute; your node joins the pool — catching each new block from kaspad just before it would be pruned and holding it in a local store. Set 0 to stay out — MyKAI Node still works exactly as before.
 
-- Default: 0 GB (feature off, behavior unchanged from v0.4)
-- 50 GB: small contributor, helpful for recent blocks
-- 200 GB: meaningful contributor
-- 1000+ GB: power-user / dedicated archive operator
+- Default: 0 GB (not joined, behavior unchanged from v0.4)
+- 50 GB: small pool contributor
+- 200 GB: meaningful pool contributor
+- 1000+ GB: dedicated archive operator
 
-The feature uses pruned kaspad + a lightweight in-process module — much lighter than running kaspad's `--archival` mode directly. Same node, just a small storage helper on the side.
+The pool uses pruned kaspad + a lightweight in-process module — much lighter than running kaspad's `--archival` mode directly. Same node, just a small storage helper on the side.
 
 ### v0.4 — Sovereign-fork foundation
 

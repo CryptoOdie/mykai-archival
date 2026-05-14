@@ -1098,25 +1098,25 @@ $('#setting-mode').addEventListener('change', (e) => {
   $('#remote-settings').classList.toggle('hidden', e.target.value !== 'remote');
 });
 
-// v0.5: shard contribution hint — update text based on the value.
+// v0.5: Archive Pool contribution hint — update text based on the value.
 function updateShardSizeHint(gb) {
   const hint = document.getElementById('shard-size-hint');
   if (!hint) return;
   const n = Number(gb) || 0;
   if (n === 0) {
-    hint.textContent = '0 GB = feature off (your node still helps Kaspa by being a normal node).';
+    hint.textContent = '0 GB = not in the pool. Your node still validates the chain normally.';
     hint.style.color = '';
   } else if (n < 50) {
-    hint.textContent = `${n} GB — small contribution, helpful for recent blocks. App restart required.`;
+    hint.textContent = `${n} GB — small pool contribution, helpful for recent blocks. App restart required.`;
     hint.style.color = '';
   } else if (n < 500) {
-    hint.textContent = `${n} GB — meaningful contribution. App restart required after save.`;
+    hint.textContent = `${n} GB — meaningful pool contribution. App restart required after save.`;
     hint.style.color = '';
   } else if (n < 2000) {
-    hint.textContent = `${n} GB — large contribution; covers significant historical depth. Verify your disk has the space + headroom. App restart required.`;
+    hint.textContent = `${n} GB — large pool contribution; covers significant historical depth. Verify your disk has the space + headroom. App restart required.`;
     hint.style.color = 'var(--kaspa-amber,#f5a623)';
   } else {
-    hint.textContent = `${n} GB — power-user / dedicated archive operator territory. Confirm your hardware can sustain this. App restart required.`;
+    hint.textContent = `${n} GB — dedicated archive operator territory. Confirm your hardware can sustain this. App restart required.`;
     hint.style.color = 'var(--kaspa-amber,#f5a623)';
   }
 }

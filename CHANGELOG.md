@@ -1,12 +1,12 @@
 # Changelog
 
-## v0.5.0 — Archival Contribution Feature (unreleased)
+## v0.5.0 — Archive Pool Feature (unreleased)
 
-The big one. MyKAI Node now optionally helps preserve Kaspa's history.
+The big one. MyKAI Node now optionally joins the **Archive Pool** — a pooled distributed archive of Kaspa's history.
 
-### New: archival contribution as an optional feature
+### New: Archive Pool participation
 
-A new Settings → Storage section: **"Help preserve Kaspa history (optional)"** with a single number input — `Contribute X GB`. Default is 0 (feature off, identical behavior to v0.4). When set to any positive value:
+A new Settings → Storage section: **"Archive Pool"** with a single number input — `Contribute X GB`. Default is 0 (not in the pool, identical behavior to v0.4). When set to any positive value:
 
 - A background **shard storage module** subscribes to the local pruned kaspad's chain events
 - For each new accepted block, captures the body into a local SQLite database (`<userData>/shard-storage.db`)
