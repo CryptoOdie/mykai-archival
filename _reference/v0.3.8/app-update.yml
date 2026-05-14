@@ -1,0 +1,7 @@
+owner: KasMapApp
+repo: MyKAI-Node-public
+provider: github
+releaseType: release
+updaterCacheDirName: mykai-node-updater
+publisherName:
+  - MyKAI

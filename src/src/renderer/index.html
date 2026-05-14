@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://kasmap.org">
+  <title>MyKAI Node</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Custom Titlebar -->
+  <div id="titlebar">
+    <div id="titlebar-drag"><span class="titlebar-label">MyKAI Node</span><span class="titlebar-version" id="titlebar-version"></span></div>
+    <div id="titlebar-controls">
+      <button class="titlebar-btn" id="btn-minimize" title="Minimize">&#x2014;</button>
+      <button class="titlebar-btn" id="btn-maximize" title="Maximize">&#x25A1;</button>
+      <button class="titlebar-btn titlebar-btn-close" id="btn-close" title="Close">&#x2715;</button>
+    </div>
+  </div>
+
+  <!-- Update Banner (non-critical) -->
+  <div id="update-banner" class="hidden">
+    <div id="update-banner-content">
+      <span id="update-banner-text"></span>
+      <div id="update-banner-actions">
+        <button id="btn-update-action" class="btn-small">Update</button>
+        <button id="btn-update-dismiss" class="btn-small">Later</button>
+      </div>
+    </div>
+    <div id="update-progress" class="hidden">
+      <div id="update-progress-text"></div>
+      <div id="update-progress-track"><div id="update-progress-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- First-run welcome modal — fires only when both electron-store
+       AND Documents\MyKAI\identity.json were empty (genuine first run).
+       Reinstalls auto-restore silently and never see this. Theme 3 of
+       the 0.3.3 plan. -->
+  <div id="firstrun-modal" class="hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content firstrun-modal-content">
+      <div class="modal-title">Welcome to MyKAI Node!</div>
+      <div class="modal-text">
+        <p>Have you used MyKAI before on another machine?</p>
+        <p style="font-size:12px;color:var(--text-secondary);margin-top:6px;">If yes, paste your accountKey to restore your stats. If this is your first time, just start fresh.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-firstrun-paste" class="btn-secondary">I have an accountKey</button>
+        <button id="btn-firstrun-fresh" class="btn-primary">Start fresh</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recovery modal — paste accountKey/nodeId, look up on Insights,
+       pick a node, restore. Used both by the first-run flow ("I have an
+       accountKey") and the Settings flow (future). Theme 5. -->
+  <div id="recovery-modal" class="hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content recovery-modal-content">
+      <div class="modal-title">Recover from accountKey</div>
+      <div class="modal-text">
+        <p style="font-size:13px;">Paste your accountKey or nodeId — we'll find your nodes in our cloud and bring back your stats.</p>
+      </div>
+      <input
+        id="recovery-input"
+        type="text"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="acc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        class="recovery-input"
+      />
+      <div id="recovery-error" class="recovery-error hidden"></div>
+
+      <!-- Match list (populated after a successful lookup with >0 matches) -->
+      <div id="recovery-matches" class="hidden">
+        <div id="recovery-source-label" style="font-size:11px;margin:10px 0 4px;font-family:'Cascadia Code','Fira Code',monospace;"></div>
+        <div style="font-size:12px;color:var(--text-secondary);margin:0 0 6px;">Found these nodes — pick the one for this machine:</div>
+        <div id="recovery-matches-list"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-recovery-cancel" class="btn-secondary">Cancel</button>
+        <button id="btn-recovery-lookup" class="btn-primary">Look up</button>
+        <button id="btn-recovery-restore" class="btn-primary hidden">Restore selected</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Critical Update Modal (hard fork) -->
+  <div id="update-modal" class="hidden">
+    <div class="update-modal-backdrop"></div>
+    <div class="update-modal-content">
+      <div class="update-modal-title">Critical Kaspa Update Required</div>
+      <div id="update-modal-text"></div>
+      <div id="update-modal-countdown" class="hidden"></div>
+      <div id="update-modal-progress" class="hidden">
+        <div id="update-modal-step"></div>
+        <div class="update-progress-track"><div id="update-modal-fill"></div></div>
+      </div>
+      <button id="btn-update-modal-action" class="btn-primary">Update kaspad Now</button>
+    </div>
+  </div>
+
+  <div id="content">
+    <!-- Status Hero -->
+    <div id="status-hero">
+      <div id="status-indicator" class="stopped">
+        <div class="indicator-ring"></div>
+        <div class="indicator-dot"></div>
+      </div>
+      <div id="status-text">Offline</div>
+      <div id="status-subtext">Press Start to connect to the Kaspa network</div>
+      <div id="sync-detail" class="hidden"></div>
+      <div id="last-activity" class="hidden"></div>
+      <div id="alerts-panel" class="hidden"></div>
+      <!-- Node Health card. Collapsed (small) when everything's green,
+           expands into a list with action buttons when issues exist. -->
+      <div id="health-card" class="health-ok hidden">
+        <button id="health-summary" class="health-summary" aria-expanded="false">
+          <span class="health-icon" id="health-icon">\u2713</span>
+          <span class="health-label" id="health-label">Healthy</span>
+          <span class="health-expand-hint" id="health-expand-hint"></span>
+        </button>
+        <div id="health-issues" class="health-issues hidden"></div>
+      </div>
+      <div id="connection-indicators">
+        <div id="agent-indicator" class="conn-indicator disconnected">
+          <span class="conn-dot"></span>
+          <span class="conn-label">No agent connected</span>
+        </div>
+        <div id="kasmap-indicator" class="conn-indicator disconnected">
+          <span class="conn-dot"></span>
+          <span class="conn-label">KasMap not configured</span>
+        </div>
+        <div id="miner-indicator" class="conn-indicator disconnected hidden">
+          <span class="conn-dot"></span>
+          <span class="conn-label">No miner connected</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div id="stats-grid">
+      <!-- Row 1: Network / Kaspad / Storage (identity + platform info) -->
+      <div class="stat-card" title="Which Kaspa network you're connected to. Mainnet is the real one. Testnet is for testing."><div class="stat-label">Network <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-network">—</div></div>
+      <div class="stat-card" title="The version of kaspad your node is running. Shown as reported over RPC (getInfo.serverVersion)."><div class="stat-label">Kaspad <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-version">—</div></div>
+      <div class="stat-card" title="How much disk space the blockchain data is using."><div class="stat-label">Storage <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-storage">—</div></div>
+      <!-- Row 2: Mempool / Peers / DAA Score (live network activity) -->
+      <div class="stat-card" title="Transactions waiting to be included in a block. Like a queue at a checkout counter. Zero means all transactions got processed."><div class="stat-label">Mempool <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-mempool">0</div></div>
+      <div class="stat-card" title="Other Kaspa nodes your node is talking to."><div class="stat-label">Peers <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-peers">0</div></div>
+      <div class="stat-card" title="The network's heartbeat counter. It ticks up with every new layer of blocks. The higher it is, the further along the blockchain."><div class="stat-label">DAA Score <span class="info-icon">&#9432;</span></div><div class="stat-value" id="stat-daa">0</div></div>
+    </div>
+
+    <!-- Mining Status Card (visible when mining is configured) -->
+    <div id="mining-card" class="hidden">
+      <div id="mining-card-header">
+        <span class="mining-card-title" id="btn-mining-panel" style="cursor:pointer" title="View mining details">MINING</span>
+        <button id="btn-mining-toggle" class="btn-small">Enable</button>
+      </div>
+      <div id="mining-card-body" class="hidden">
+        <div id="mining-url-row">
+          <code id="mining-url">—</code>
+          <button id="btn-copy-mining-url" class="btn-small">Copy</button>
+        </div>
+        <div id="mining-stats-row">
+          <span>Miners: <strong id="mining-miner-count">0</strong></span>
+          <span>Hashrate: <strong id="mining-hashrate">0</strong></span>
+          <span>Blocks: <strong id="mining-blocks">0</strong></span>
+          <span>Earned: <strong id="mining-reward">0 KAS</strong></span>
+        </div>
+        <div id="mining-asic-guide" class="hidden">
+          <div class="setting-hint" style="margin-top:6px;line-height:1.5">
+            <strong>ASIC Setup:</strong><br>
+            Pool URL: <code id="mining-guide-url" style="color:var(--kaspa-teal);cursor:pointer">—</code><br>
+            Worker: <span style="color:var(--text-secondary)">anything (e.g. "rig1")</span><br>
+            Password: <span style="color:var(--text-secondary)">x</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gamification Stats -->
+    <div id="game-stats">
+      <div class="game-stat" title="Transactions per second right now."><span class="game-label">Current TPS <span class="info-icon">&#9432;</span></span><span class="game-value" id="game-tps">0</span></div>
+      <div class="game-stat" title="Total transactions your node has verified. Every KAS transfer goes through your node."><span class="game-label">Transactions Validated <span class="info-icon">&#9432;</span></span><span class="game-value" id="game-tx">0</span></div>
+      <div class="game-stat" title="Total blocks your node has checked and confirmed since it started. Your node verifies every block is valid — that's what running a node means."><span class="game-label">Blocks Validated <span class="info-icon">&#9432;</span></span><span class="game-value" id="game-blocks">0</span></div>
+    </div>
+
+    <!-- Node Stats -->
+    <div id="node-health">
+      <div class="game-stat" title="How long your node has been online without interruption this session."><span class="game-label">Time Online <span class="info-icon">&#9432;</span></span><span class="game-value" id="health-streak">—</span></div>
+      <div class="game-stat" title="The longest time your node has been online uninterrupted ever. Something to be proud of!"><span class="game-label">Time Online Record <span class="info-icon">&#9432;</span></span><span class="game-value" id="health-best-streak">—</span></div>
+      <div class="game-stat" title="The total time your node has been online when counting all sessions."><span class="game-label">Total Time Online <span class="info-icon">&#9432;</span></span><span class="game-value" id="health-total-uptime">—</span></div>
+    </div>
+
+    <!-- My Nodes (cloud monitoring + miners) -->
+    <div id="my-nodes-section" class="hidden">
+      <div id="my-nodes-header">
+        <span id="my-nodes-title">MY NODES</span>
+        <span id="my-nodes-count"></span>
+      </div>
+      <div id="my-nodes-table"></div>
+    </div>
+
+    <!-- Milestones (hidden, only shown as toast popover) -->
+
+    <!-- Sync Progress -->
+    <div id="sync-bar-container" class="hidden">
+      <div class="sync-row" id="sync-row-headers">
+        <div class="sync-label">
+          <span class="sync-name">Headers</span>
+          <span class="sync-count" id="sync-count-headers"></span>
+          <span class="sync-pct" id="sync-pct-headers">0%</span>
+        </div>
+        <div class="sync-track"><div class="sync-fill" id="sync-fill-headers" style="width: 0%"></div></div>
+      </div>
+      <div class="sync-row" id="sync-row-blocks">
+        <div class="sync-label">
+          <span class="sync-name">Blocks</span>
+          <span class="sync-count" id="sync-count-blocks"></span>
+          <span class="sync-pct" id="sync-pct-blocks">0%</span>
+        </div>
+        <div class="sync-track"><div class="sync-fill" id="sync-fill-blocks" style="width: 0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Milestone Toast -->
+    <div id="milestone-toast" class="hidden">
+      <div class="toast-icon">&#x1F3C6;</div>
+      <div class="toast-text"></div>
+    </div>
+
+    <!-- Activity Feed (default view) -->
+    <div id="activity-feed">
+      <div class="activity-header">
+        <span class="section-header">Activity</span>
+        <a href="#" id="btn-settings" class="settings-link">&#x2699; Settings</a>
+      </div>
+      <div id="activity-list"></div>
+    </div>
+
+
+    <!-- Mining Panel (hidden by default) -->
+    <div id="mining-panel" class="hidden">
+      <h3>Miners</h3>
+      <div id="mining-workers-table"></div>
+      <div id="mining-workers-empty" class="setting-hint">No miners connected yet. Point your ASIC to the stratum URL shown above.</div>
+      <h3 style="margin-top:16px">Mining Log</h3>
+      <div id="mining-log-output" style="max-height:200px;overflow-y:auto;font-size:11px;color:var(--text-secondary);background:var(--bg-primary);border-radius:6px;padding:8px;font-family:monospace"></div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">Settings</h3>
+        <div style="display:flex;gap:14px;align-items:center">
+          <a href="#" id="btn-discard-settings" class="settings-link hidden">Discard</a>
+          <button id="btn-save-settings" class="btn-primary hidden" style="padding:4px 14px;font-size:13px">Save</button>
+          <a href="#" id="btn-close-settings" class="settings-link">✕ Close</a>
+        </div>
+      </div>
+
+      <!-- Tab strip — pages the settings form into 4 sections so users
+           don't scroll through a wall of toggles to reach one option.
+           Tab switching is purely visual (show/hide); the underlying
+           form is still one DOM tree, so dirty-tracking + Save/Discard
+           in the header continue to work across all tabs. -->
+      <div class="settings-tabs" id="settings-tabs">
+        <a href="#" class="settings-tab-link active" data-tab="general">Settings</a>
+        <a href="#" class="settings-tab-link" data-tab="integrations">Integrations</a>
+        <a href="#" class="settings-tab-link" data-tab="version">Version</a>
+        <a href="#" class="settings-tab-link" data-tab="help">Help</a>
+      </div>
+
+      <div class="settings-tab-page" data-tab="general">
+      <div class="setting-row" title="Bundled manages kaspad for you. Remote connects to a kaspad running elsewhere.">
+        <label>Node mode</label>
+        <select id="setting-mode"><option value="bundled">Bundled (manage kaspad)</option><option value="remote">Remote (connect to existing)</option></select>
+      </div>
+      <div id="remote-settings" class="hidden">
+        <div class="setting-row" title="The WebSocket address of your remote kaspad node.">
+          <label>Remote node URL</label>
+          <input type="text" id="setting-remote-url" placeholder="ws://192.168.1.50:17110" style="width:220px">
+        </div>
+        <div class="setting-hint">Connect to an existing kaspad. Read-only monitoring — won't touch the remote node.</div>
+      </div>
+      <div class="setting-row" title="Which Kaspa network to connect to. Mainnet is the real one with real KAS. Testnet is for developers to test without real money.">
+        <label>Network</label>
+        <select id="setting-network"><option value="mainnet">Mainnet</option><option value="testnet">Testnet</option></select>
+      </div>
+      <div class="setting-row" title="Public means your node accepts incoming connections from other nodes (default — helps the network and lets your node show up on KasMap). Private disables UPnP and hides your IP from the public map.">
+        <label>Node visibility</label>
+        <select id="setting-visibility"><option value="public">Public</option><option value="private">Private</option></select>
+      </div>
+      <div class="setting-row" title="Start MyKAI Node automatically when Windows starts. Runs quietly in the tray. Click the tray icon to open the window.">
+        <label>Launch on startup</label>
+        <input type="checkbox" id="setting-launch-startup" checked>
+      </div>
+      <div class="setting-row" title="Keep the app running in your system tray when you close the window.">
+        <label>Minimize to tray</label>
+        <input type="checkbox" id="setting-tray" checked>
+      </div>
+      <div class="setting-row" title="Prevent your computer from going to sleep during first-time setup. Strongly recommended &mdash; if your computer sleeps during setup, it has to restart from scratch. Only the initial setup is protected; normal operation lets your computer sleep normally.">
+        <label>Keep computer awake during setup</label>
+        <input type="checkbox" id="setting-prevent-sleep" checked>
+      </div>
+      <div class="setting-row" title="How many other nodes to connect to. More peers means faster sync and better network coverage. Default is 64.">
+        <label>Outbound peers</label>
+        <input type="number" id="setting-peers" min="1" max="128" value="64">
+      </div>
+      <div class="setting-row" title="Where the blockchain data is stored on your computer.">
+        <label>Data directory</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="setting-value" id="setting-datadir">—</div>
+          <button id="btn-change-datadir" class="btn-small" title="Move Kaspa data to a different drive — useful for USB SSDs when your main drive is low on space.">Change drive</button>
+        </div>
+      </div>
+      <!-- Drive picker modal (hidden by default) -->
+      <div id="drive-picker-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+          <h3>Choose a drive for Kaspa data</h3>
+          <div class="setting-hint">
+            The MyKAI app itself stays on your C: drive. Only blockchain data
+            moves to the drive you pick — Kaspa currently needs about 30 GB
+            and can grow to 100 GB or more.
+          </div>
+          <div id="drive-list">
+            <div class="setting-hint">Scanning drives…</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:8px;">
+            <button id="btn-choose-folder" class="btn-small">Choose folder…</button>
+            <div>
+              <button id="btn-drive-cancel" class="btn-small">Cancel</button>
+              <button id="btn-drive-confirm" class="btn-primary" disabled>Move data</button>
+            </div>
+          </div>
+          <!-- Move progress (hidden until move starts) -->
+          <div id="drive-move-progress" class="hidden" style="margin-top:12px;">
+            <div class="setting-hint" id="drive-move-status">Preparing…</div>
+            <progress id="drive-move-bar" value="0" max="100" style="width:100%;height:6px;"></progress>
+          </div>
+        </div>
+      </div>
+      <div class="setting-row" title="How much disk space the blockchain data is using.">
+        <label>Storage used</label>
+        <div class="setting-value" id="setting-storage">—</div>
+      </div>
+
+      <div class="setting-row" title="The WebSocket endpoint for wallet and agent connections.">
+        <label>Endpoint</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <code id="endpoint-url" style="font-size:11px;color:var(--kaspa-teal);font-family:'Cascadia Code','Fira Code',monospace">ws://localhost:17110</code>
+          <button id="btn-copy-endpoint" class="btn-small">Copy</button>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 16px;">Appearance</h3>
+      <div class="setting-row" title="Switch between dark and light mode.">
+        <label>Theme</label>
+        <select id="setting-theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>
+      </div>
+      </div><!-- /settings-tab-page general -->
+
+      <div class="settings-tab-page hidden" data-tab="integrations">
+      <h3 style="margin-top: 16px;">KasMap Integration</h3>
+      <div class="setting-row" title="Show your node status on your KasMap profile. Requires a token from your KasMap account.">
+        <label>Connect to KasMap</label>
+        <input type="checkbox" id="setting-kasmap-enabled">
+      </div>
+      <div id="kasmap-settings" class="hidden">
+        <div id="kasmap-no-token" class="setting-hint" style="margin-bottom:8px">
+          You need a token to connect your node to KasMap. Get one from your
+          <a href="#" id="link-kasmap-nodes" style="color:var(--kaspa-teal);text-decoration:underline">KasMap account</a>.
+        </div>
+        <div class="setting-row" title="Your unique token from KasMap. Links this node to your KasMap profile.">
+          <label>KasMap Token</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="setting-kasmap-token" placeholder="km_node_..." style="width:180px">
+            <button id="btn-kasmap-verify" class="btn-small">Verify</button>
+          </div>
+        </div>
+        <div id="kasmap-verify-result" class="hidden"></div>
+        <div class="setting-hint">Your node sends status, version, uptime, blocks, transactions, and visibility (private/public) to KasMap. KasMap controls what appears on your profile.</div>
+        <div id="kasmap-status-line" class="hidden"></div>
+      </div>
+
+      <h3 style="margin-top: 16px;">Mining (Solo)</h3>
+      <div class="setting-row" title="Enable solo mining through your own node. Your miners connect directly — no pool, no fees.">
+        <label>Enable mining</label>
+        <input type="checkbox" id="setting-mining-enabled">
+      </div>
+      <div id="mining-settings" class="hidden">
+        <div class="setting-row" title="Your Kaspa wallet address where mining rewards will be sent.">
+          <label>Mining address</label>
+          <input type="text" id="setting-mining-address" placeholder="kaspa:qr..." style="width:220px">
+        </div>
+        <div class="setting-hint" style="font-size:11px; color:var(--text-secondary); margin:-4px 0 6px 0; padding:0 4px;">
+          ⚠️ Format and length are validated, but not the address checksum. Triple-check the last 8 characters before saving — mining rewards sent to a typo will be permanently lost.
+        </div>
+        <div id="mining-address-error" class="hidden error" style="font-size:11px"></div>
+        <div class="setting-row" title="Who can connect to your mining bridge.">
+          <label>Mining access</label>
+          <select id="setting-stratum-bind">
+            <option value="localhost">This computer only</option>
+            <option value="lan">Local network</option>
+            <option value="all">All networks (remote miners)</option>
+          </select>
+        </div>
+        <div class="setting-row" title="The port miners connect to. Default 5555. Only change if something else uses that port.">
+          <label>Stratum port</label>
+          <input type="number" id="setting-stratum-port" min="1024" max="65535" value="5555" style="width:80px">
+        </div>
+      </div>
+
+      <h3 style="margin-top: 16px;">Cloud Nodes</h3>
+      <div class="setting-hint">Run Kaspa nodes in the cloud and monitor them from here. The script reports to both MyKAI Insights and KasMap automatically.</div>
+      <button id="btn-generate-cloud-script" class="btn-secondary" style="margin-top:8px">Generate Cloud Monitor Script</button>
+      <div id="cloud-script-result" class="hidden" style="margin-top:8px"></div>
+
+      <h3 style="margin-top: 16px;">Account Key</h3>
+      <div class="setting-hint">This key links all your nodes together — local and cloud. Keep it safe. You need it to recover your nodes if you reinstall MyKAI Node on a new computer.</div>
+      <div class="setting-row">
+        <label>Your Account Key</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <code id="setting-account-key" style="font-size:10px;color:var(--text-secondary)">—</code>
+          <button id="btn-copy-account-key" class="btn-small">Copy</button>
+        </div>
+      </div>
+      </div><!-- /settings-tab-page integrations -->
+
+      <div class="settings-tab-page hidden" data-tab="version">
+      <!-- App version + manual upgrade trigger.
+           The auto-update banner at the top of the dashboard fires
+           when an update is detected and downloaded — but some users
+           dismiss it, ignore it, or just want to check "is there a
+           new version?" themselves. This Settings section gives them
+           a deliberate, persistent path. Theme G of 0.3.5 plan. -->
+      <h4 style="margin-top: 20px; margin-bottom: 6px; font-size: 13px; color: var(--text-secondary); font-weight: 600;">App version</h4>
+      <div class="setting-row" style="display:flex;align-items:center;gap:10px;justify-content:flex-start;">
+        <div style="flex:1;">
+          <div>You're on <strong id="app-version-current">…</strong></div>
+          <div id="app-version-status" style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Checking for updates…</div>
+        </div>
+        <button id="btn-upgrade-now" class="btn-primary hidden">Upgrade now</button>
+      </div>
+      <div class="setting-row" title="Automatically check for new versions of MyKAI Node when the app starts and once a day while it's running.">
+        <label>Auto-check for updates</label>
+        <input type="checkbox" id="setting-autoupdate" checked>
+      </div>
+      <div class="setting-row" title="Ask the update server right now whether a newer version is available.">
+        <label>Check manually for an update now</label>
+        <button id="btn-check-updates" class="btn-secondary">Check</button>
+      </div>
+
+      <h3 style="margin-top: 16px;">Network Monitoring</h3>
+      <div class="setting-hint">Anonymous. No account needed. Helps map global Kaspa network health.</div>
+      </div><!-- /settings-tab-page version -->
+
+      <div class="settings-tab-page hidden" data-tab="help">
+      <h3 style="margin-top: 32px;">Get help</h3>
+
+      <div class="setting-row" title="When your node has trouble, MyKAI sends a small technical report so we can help. No personal info is shared.">
+        <label>Share error diagnostics to prevent and fix issues automatically</label>
+        <input type="checkbox" id="setting-share-diagnostics" checked>
+      </div>
+      <div class="setting-hint">When something breaks, MyKAI sends a technical report so we can help — often without you having to do anything. Personal info is redacted.</div>
+
+      <div style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Report a problem</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">If your node has a specific issue you want to tell us about, copy a report and paste it into our Discord or email.</div>
+        <button id="btn-copy-diagnostic" class="btn-small">Copy diagnostic info</button>
+      </div>
+
+      <!-- Identity (accountKey + lifetime stats) backup + reset.
+           Documents\MyKAI\identity.json is the durable copy that
+           survives PC-cleaner wipes of %APPDATA%. The Reset button is
+           the ONLY programmatic path to a true reset. -->
+      <div style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Save your progress</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">
+          Your blocks, uptime, and other achievements live with this node. MyKAI keeps a backup file in your Documents folder so you don't lose them if your computer breaks or you reinstall. For extra safety, copy that file somewhere else — OneDrive, a USB stick, or wherever you keep important things.
+        </div>
+        <button id="btn-open-backup-folder" class="btn-secondary">Open backup folder</button>
+        <button id="btn-recover-from-key" class="btn-secondary" style="margin-left:8px;" title="Restore your achievements on a new computer using your saved backup file or key.">Restore from backup</button>
+        <button id="btn-reset-identity" class="btn-stop-settings" style="margin-left:8px;" title="Start fresh with a new node identity. You'll lose access to your current achievements unless you saved your backup.">Start over</button>
+      </div>
+
+      <!-- Chain data reset — heavy-hammer escape hatch for corrupted
+           chain DB / stuck sync. Different from Reset identity above:
+           that wipes accountKey + stats; this wipes the local Kaspa
+           chain database (re-sync from scratch, ~2-4 hours) but keeps
+           your identity intact. Theme F of 0.3.4 plan. -->
+      <div style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Chain data</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">
+          If your sync is stuck for hours and nothing else helps, this deletes the local Kaspa chain database (~37 GB) and starts a fresh sync. Takes 2&ndash;4 hours but reliably finishes. Your accountKey and stats are <strong>preserved</strong>.
+        </div>
+        <button id="btn-reset-chain-data" class="btn-stop-settings" title="Hold for 5 seconds to delete the local Kaspa chain database and re-sync from scratch.">Reset chain data</button>
+      </div>
+
+      <div style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Stop the node</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">
+          Shuts down kaspad and disconnects from the network. The app stays open so you can start it again later. Use this if you need to free up CPU or bandwidth, or if you're troubleshooting an issue.
+        </div>
+        <button id="btn-toggle" class="btn-stop-settings">Stop Node</button>
+      </div>
+      </div><!-- /settings-tab-page help -->
+    </div>
+  </div>
+
+  <!-- Click-to-pin tooltip popover. Hidden by default; a global click
+       handler in app.js positions and shows it next to the .info-icon
+       the user clicked. Click outside or press Escape to dismiss. -->
+  <div id="info-popover" class="hidden" role="tooltip">
+    <button class="info-popover-close" id="info-popover-close" title="Close" aria-label="Close">&#x2715;</button>
+    <div class="info-popover-text" id="info-popover-text"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

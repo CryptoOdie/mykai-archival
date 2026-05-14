@@ -1,0 +1,14 @@
+{
+  "name": "mykai-node",
+  "version": "0.3.8",
+  "description": "One-click Kaspa node for sovereign blockchain access",
+  "main": "dist/main/main.js",
+  "author": "MyKAI",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.102.1",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.3",
+    "ws": "^8.18.0"
+  }
+}

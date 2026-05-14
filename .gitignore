@@ -1,0 +1,14 @@
+node_modules/
+dist/main/*.map
+dist/preload/*.map
+*.log
+.DS_Store
+.env
+.env.local
+build/
+out/
+release/
+_reference/v0.3.8/kaspad.exe
+_reference/v0.3.8/ks_bridge.exe
+.vscode/
+.idea/

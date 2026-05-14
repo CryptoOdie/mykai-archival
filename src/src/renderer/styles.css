@@ -1,0 +1,427 @@
+:root {
+  --kaspa-teal: #49EACB;
+  --kaspa-teal-dim: rgba(73, 234, 203, 0.15);
+  --bg-primary: #0a0f1a;
+  --bg-secondary: #0f1623;
+  --bg-card: #141c2b;
+  --bg-hover: #1a2435;
+  --text-primary: #e8ecf4;
+  --text-secondary: #8892a4;
+  --border: #1e2a3a;
+  --red: #ff5050;
+  --amber: #ffbf00;
+  --green: #49EACB;
+  --gray: #808080;
+  --gold: #ffd700;
+}
+
+/* Light theme */
+html[data-theme="light"] {
+  --bg-primary: #f0f2f5;
+  --bg-secondary: #e4e6eb;
+  --bg-card: #ffffff;
+  --bg-hover: #e8eaed;
+  --text-primary: #1a1a2e;
+  --text-secondary: #65676b;
+  --border: #d0d3d8;
+}
+
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Titlebar */
+#titlebar { display: flex; align-items: center; height: 36px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+#titlebar-drag { flex: 1; -webkit-app-region: drag; height: 100%; display: flex; align-items: center; padding-left: 14px; }
+.titlebar-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.5px; }
+.titlebar-version { font-size: 11px; font-weight: 400; color: var(--text-secondary); letter-spacing: 0.3px; margin-left: 8px; opacity: 0.55; }
+#titlebar-controls { display: flex; -webkit-app-region: no-drag; }
+.titlebar-btn { width: 46px; height: 36px; border: none; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.titlebar-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.titlebar-btn-close:hover { background: var(--red); color: white; }
+
+/* Content */
+#content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+
+/* Status Hero */
+#status-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; }
+#status-indicator { width: 70px; height: 70px; position: relative; display: flex; align-items: center; justify-content: center; }
+.indicator-ring { position: absolute; width: 70px; height: 70px; border-radius: 50%; border: 3px solid var(--gray); opacity: 0.3; }
+.indicator-dot { width: 36px; height: 36px; border-radius: 50%; background: var(--gray); transition: background 0.3s; }
+
+#status-indicator.stopped .indicator-dot { background: var(--gray); }
+#status-indicator.stopped .indicator-ring { border-color: var(--gray); }
+#status-indicator.starting .indicator-dot { animation: syncPulse 1.5s ease-in-out infinite; }
+#status-indicator.starting .indicator-ring { border-color: var(--kaspa-teal); opacity: 0.5; animation: pulse 1.5s ease-in-out infinite; }
+#status-indicator.syncing .indicator-dot { animation: syncPulse 2s ease-in-out infinite; }
+#status-indicator.syncing .indicator-ring { border-color: var(--kaspa-teal); animation: spin 2s linear infinite; }
+#status-indicator.synced .indicator-dot { background: var(--green); box-shadow: 0 0 20px rgba(73, 234, 203, 0.4); }
+#status-indicator.synced .indicator-ring { border-color: var(--green); animation: pulse 3s ease-in-out infinite; }
+#status-indicator.error .indicator-dot { background: var(--red); }
+#status-indicator.error .indicator-ring { border-color: var(--red); }
+
+/* Warning override — outer ring turns amber when a heartbeat alert is active.
+   Inner dot keeps its status color so the user still sees the node is running. */
+#status-indicator.has-warning .indicator-ring { border-color: #ffbf00 !important; opacity: 0.6; animation: pulse 2s ease-in-out infinite; }
+
+@keyframes syncPulse { 0%, 100% { background: var(--gray); } 50% { background: var(--kaspa-teal); box-shadow: 0 0 15px rgba(73, 234, 203, 0.3); } }
+@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.05); } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+#status-indicator.flash .indicator-dot { animation: flash 0.6s ease; }
+@keyframes flash { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+
+#status-text { font-size: 18px; font-weight: 600; }
+#status-subtext { font-size: 13px; color: var(--text-secondary); text-align: center; max-width: 320px; line-height: 1.4; }
+
+#sync-detail { font-size: 12px; color: var(--kaspa-teal); text-align: center; font-family: 'Cascadia Code', 'Fira Code', monospace; background: var(--kaspa-teal-dim); padding: 4px 14px; border-radius: 12px; }
+
+#last-activity { font-size: 11px; color: var(--text-secondary); text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px; }
+#last-activity .activity-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--kaspa-teal); animation: activityBlink 1.5s ease-in-out infinite; }
+@keyframes activityBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+/* Endpoint URL (in settings) */
+#endpoint-url { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 11px; color: var(--kaspa-teal); }
+
+/* Connection Indicators */
+#alerts-panel { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 480px; margin: 12px 0 4px; }
+#alerts-panel.hidden { display: none; }
+.alert-card { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--gray); border-radius: 6px; padding: 10px 12px; text-align: left; }
+.alert-card.warning { border-left-color: #ffbf00; }
+.alert-card.error { border-left-color: #ff5050; }
+.alert-card.info { border-left-color: var(--kaspa-teal); }
+.alert-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.alert-message { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.alert-action { font-size: 12px; color: var(--kaspa-teal); margin-top: 6px; font-weight: 500; }
+.alert-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.alert-btn { background: var(--kaspa-teal); color: #0b1112; border: 0; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+.alert-btn:hover:not(:disabled) { opacity: 0.85; }
+.alert-btn:disabled { opacity: 0.6; cursor: default; }
+.alert-note { font-size: 11px; color: var(--text-secondary); }
+
+/* Health card. Subtle green check by default; expands on warn/fail into
+   a list with per-issue action buttons. Non-tech users see a single
+   calming row until something actually needs attention. */
+#health-card { width: 100%; max-width: 480px; margin: 10px 0 4px; }
+#health-card.hidden { display: none; }
+.health-summary {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 6px 10px; color: var(--text-secondary); font-size: 12px;
+  cursor: default; text-align: left;
+}
+.health-card.health-ok .health-summary { cursor: default; }
+.health-card.health-warn .health-summary, .health-card.health-fail .health-summary {
+  cursor: pointer; background: var(--bg-card); border-color: var(--border);
+}
+.health-icon { font-weight: 700; font-size: 14px; }
+.health-card.health-ok .health-icon { color: var(--kaspa-teal); }
+.health-card.health-warn .health-icon { color: #ffbf00; }
+.health-card.health-fail .health-icon { color: #ff5050; }
+.health-label { color: var(--text-primary); font-weight: 500; }
+.health-expand-hint { margin-left: auto; color: var(--text-secondary); font-size: 11px; }
+.health-issues { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.health-issues.hidden { display: none; }
+.health-issue {
+  background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid #ffbf00;
+  border-radius: 6px; padding: 10px 12px;
+}
+.health-issue.health-fail { border-left-color: #ff5050; }
+.health-issue-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.health-issue-detail { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.health-issue-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.health-issue-btn {
+  background: var(--kaspa-teal); color: #0b1112; border: 0; padding: 6px 12px;
+  border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.health-issue-btn.secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
+.health-issue-btn:hover { opacity: 0.85; }
+
+/* Drive picker modal — shown when user clicks "Change drive" next to Data directory */
+.modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.modal.hidden { display: none; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); }
+.modal-panel { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; max-width: 560px; width: 90%; max-height: 80vh; overflow-y: auto; }
+.modal-panel h3 { margin: 0 0 10px 0; font-size: 15px; }
+#drive-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 340px; overflow-y: auto; }
+.drive-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
+.drive-row:hover:not(.disabled) { background: var(--bg-hover); }
+.drive-row.selected { border-color: var(--kaspa-teal); background: var(--bg-hover); }
+.drive-row.disabled { opacity: 0.45; cursor: not-allowed; }
+.drive-row input[type="radio"] { accent-color: var(--kaspa-teal); }
+.drive-row-main { flex: 1; }
+.drive-row-title { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.drive-row-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+#connection-indicators { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 360px; }
+
+/* ─── Setup mode — calm, minimal UI during first-time UTXO rebuild ────
+   Non-tech users shouldn't see status timers, peer counts, health alerts,
+   connection indicators, or a stats grid full of zeros while the node is
+   still setting itself up. Hide everything except the status indicator +
+   a simple "Setting up your node — keep running" message.            */
+body.setup-mode #last-activity,
+body.setup-mode #connection-indicators,
+body.setup-mode #health-card,
+body.setup-mode #alerts-panel,
+body.setup-mode #stats-grid,
+body.setup-mode #my-nodes-section,
+body.setup-mode #activity-feed,
+body.setup-mode #mining-panel,
+body.setup-mode #settings-panel,
+body.setup-mode #status-subtext,
+body.setup-mode #sync-bar-container {
+  display: none !important;
+}
+/* Keep the simplified sync detail visible and prominent during setup */
+body.setup-mode #sync-detail {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin-top: 8px;
+  max-width: 480px;
+  text-align: center;
+}
+.conn-indicator { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.conn-indicator.connected .conn-dot { background: var(--kaspa-teal); box-shadow: 0 0 6px rgba(73, 234, 203, 0.5); }
+.conn-indicator.disconnected .conn-dot { background: var(--gray); }
+.conn-indicator.connected .conn-label { color: var(--kaspa-teal); }
+
+/* Mining Card */
+#mining-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+#mining-card-header { display: flex; align-items: center; justify-content: space-between; }
+.mining-card-title { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
+#mining-card-body { margin-top: 8px; }
+#mining-url-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+#mining-url { font-size: 12px; color: var(--kaspa-teal); background: var(--bg-primary); padding: 4px 8px; border-radius: 4px; flex: 1; }
+#mining-stats-row { display: flex; gap: 16px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; }
+#mining-stats-row strong { color: var(--kaspa-teal); }
+
+/* Mining Workers Table */
+.mining-worker-row { display: grid; grid-template-columns: 1fr 80px 60px 60px 50px 60px; gap: 6px; align-items: center; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; margin-bottom: 4px; }
+.mining-worker-name { color: var(--text-primary); font-weight: 600; }
+.mining-worker-val { color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+.mining-worker-status { display: flex; align-items: center; gap: 4px; }
+
+/* My Nodes */
+#my-nodes-section { margin-bottom: 8px; }
+#my-nodes-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#my-nodes-title { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
+#my-nodes-count { font-size: 10px; color: var(--text-secondary); }
+#my-nodes-table { display: grid; grid-template-columns: 1fr; gap: 4px; }
+@media (min-width: 1100px) { #my-nodes-table { grid-template-columns: repeat(2, 1fr); } }
+.my-node-row { display: grid; grid-template-columns: 1fr 70px 70px 50px 60px 60px; gap: 8px; align-items: center; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; }
+.my-node-name { color: var(--text-primary); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.my-node-status { display: flex; align-items: center; gap: 4px; }
+.my-node-dot { width: 6px; height: 6px; border-radius: 50%; }
+.my-node-dot.online { background: var(--green); }
+.my-node-dot.offline { background: var(--gray); }
+.my-node-dot.syncing { background: var(--amber); }
+.my-node-val { color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Stats Grid */
+#stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+.stat-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.info-icon { font-size: 10px; color: var(--text-secondary); opacity: 0.5; cursor: pointer; transition: opacity 0.15s ease; }
+.info-icon:hover { opacity: 1; }
+
+/* Click-to-pin tooltip popover. Layered on top of native title= hover so
+   users can either hover for a fleeting hint or click to pin it. The
+   popover absolute-positions next to its anchor; JS sets left/top. */
+#info-popover {
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  z-index: 10000;
+  pointer-events: auto;
+}
+#info-popover.hidden { display: none; }
+#info-popover .info-popover-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 2px 6px;
+}
+#info-popover .info-popover-close:hover { opacity: 1; }
+#info-popover .info-popover-text { padding-right: 18px; }
+.stat-value { font-size: 16px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* Gamification Stats */
+#game-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.game-stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; }
+.game-label { display: block; font-size: 9px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+.game-value { display: block; font-size: 15px; font-weight: 700; color: var(--kaspa-teal); font-variant-numeric: tabular-nums; }
+
+/* Node Health */
+#node-health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+
+/* Milestones */
+#milestones-bar { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.milestones-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+#milestones-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.milestone { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.milestone.locked { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border); }
+.milestone.unlocked { background: rgba(255, 215, 0, 0.1); color: var(--gold); border: 1px solid rgba(255, 215, 0, 0.3); }
+
+/* Sync Bars */
+#sync-bar-container { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.sync-row { }
+.sync-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.sync-name { font-weight: 600; }
+/* Count label sits between the name and the percent. Empty by default
+   (no downloaded count yet); populated by the renderer with "1.2M
+   downloaded" / "4.5K validated" once kaspad starts reporting counts.
+   Lets the user see progress is happening even when the percent stays
+   at 0% during pre-IBD phases (Theme 6 of the 0.3.3 plan). */
+.sync-count { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 11px; color: var(--text-secondary); margin-left: auto; margin-right: 12px; }
+.sync-pct { font-family: 'Cascadia Code', 'Fira Code', monospace; color: var(--kaspa-teal); }
+.sync-track { height: 6px; background: var(--bg-secondary); border-radius: 3px; overflow: hidden; }
+.sync-fill { height: 100%; background: linear-gradient(90deg, var(--kaspa-teal), #3fd4b8); border-radius: 3px; transition: width 0.5s ease; }
+
+/* Controls */
+/* Settings link in activity header */
+.settings-link { font-size: 11px; color: var(--text-secondary); text-decoration: underline; cursor: pointer; transition: color 0.15s; }
+.settings-link:hover { color: var(--kaspa-teal); }
+.settings-link.active { color: var(--kaspa-teal); }
+
+/* Settings tab strip — splits the long settings form into 4 pages
+   (Settings / Integrations / Version / Help) so users don't scroll
+   through everything to reach a single toggle. */
+.settings-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.settings-tab-link {
+  padding: 8px 14px; font-size: 13px; color: var(--text-secondary);
+  text-decoration: none; cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: color 0.15s, border-color 0.15s;
+}
+.settings-tab-link:hover { color: var(--text-primary); }
+.settings-tab-link.active { color: var(--kaspa-teal); border-bottom-color: var(--kaspa-teal); }
+
+/* Stop/Start button in settings */
+.btn-stop-settings { background: transparent; border: 1px solid var(--red); color: var(--red); padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.btn-stop-settings:hover { background: var(--red); color: white; }
+.btn-stop-settings.btn-start { border-color: var(--kaspa-teal); color: var(--kaspa-teal); }
+.btn-stop-settings.btn-start:hover { background: var(--kaspa-teal); color: var(--bg-primary); }
+.btn-primary { flex: 1; padding: 10px 16px; border: none; border-radius: 8px; background: var(--kaspa-teal); color: var(--bg-primary); font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity 0.2s; }
+.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
+.btn-primary.loading { background: var(--text-secondary); color: var(--bg-primary); animation: btnPulse 1.2s ease-in-out infinite; }
+@keyframes btnPulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+.btn-primary.running { background: var(--red); color: white; }
+.btn-secondary { padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 0.2s; }
+.btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+.btn-secondary.active { border-color: var(--kaspa-teal); color: var(--kaspa-teal); }
+.btn-secondary.loading { opacity: 0.6; animation: btnPulse 1.2s ease-in-out infinite; }
+.btn-small { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary); color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+.btn-small:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Milestone Toast */
+#milestone-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(255, 215, 0, 0.15); border: 1px solid rgba(255, 215, 0, 0.4); color: var(--gold); padding: 10px 20px; border-radius: 12px; display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; z-index: 100; animation: toastIn 0.4s ease; cursor: pointer; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+.toast-icon { font-size: 24px; }
+
+/* Activity Feed — grows to fill available space */
+#activity-feed { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; min-height: 120px; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.activity-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 6px; flex-shrink: 0; }
+.activity-header .section-header { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin: 0; }
+#activity-list { flex: 1; overflow-y: auto; padding: 6px 12px 8px; }
+.activity-item { padding: 4px 0; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.activity-item:last-child { border-bottom: none; }
+.activity-time { font-size: 10px; color: var(--text-secondary); opacity: 0.6; flex-shrink: 0; }
+.activity-msg { flex: 1; }
+.activity-item.highlight { color: var(--kaspa-teal); }
+.activity-item.milestone-item { color: var(--gold); }
+
+/* Settings */
+#settings-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+#settings-panel h3 { font-size: 14px; margin-bottom: 12px; color: var(--text-primary); }
+.setting-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.setting-row:last-of-type { border-bottom: none; }
+.setting-row label { font-size: 12px; color: var(--text-secondary); }
+.setting-row select, .setting-row input[type="number"], .setting-row input[type="text"] { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); padding: 4px 8px; font-size: 12px; }
+.setting-row input[type="checkbox"] { accent-color: var(--kaspa-teal); width: 16px; height: 16px; }
+.setting-value { font-size: 11px; color: var(--text-secondary); font-family: 'Cascadia Code', monospace; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.setting-hint { font-size: 11px; color: var(--text-secondary); padding: 0 0 4px; font-style: italic; }
+.setting-section-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; padding: 10px 0 4px; }
+#kasmap-verify-result { font-size: 11px; padding: 4px 0; }
+#kasmap-verify-result.success { color: var(--kaspa-teal); }
+#kasmap-verify-result.error { color: var(--red); }
+#kasmap-status-line { font-size: 11px; color: var(--text-secondary); padding: 8px 0; border-top: 1px solid var(--border); margin-top: 8px; }
+
+/* Update Banner */
+#update-banner { background: var(--kaspa-teal-dim); border-bottom: 1px solid var(--kaspa-teal); padding: 8px 16px; flex-shrink: 0; }
+#update-banner.critical { background: rgba(255, 80, 80, 0.1); border-color: var(--red); }
+#update-banner-content { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#update-banner-text { font-size: 12px; color: var(--kaspa-teal); flex: 1; }
+#update-banner.critical #update-banner-text { color: var(--red); }
+#update-banner-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#update-progress { margin-top: 6px; }
+#update-progress-text { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+#update-progress-track, .update-progress-track { height: 4px; background: var(--bg-secondary); border-radius: 2px; overflow: hidden; }
+#update-progress-fill, #update-modal-fill { height: 100%; background: var(--kaspa-teal); border-radius: 2px; transition: width 0.3s ease; width: 0%; }
+
+/* Critical Update Modal */
+#update-modal { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; }
+.update-modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.7); }
+.update-modal-content { position: relative; background: var(--bg-card); border: 1px solid var(--red); border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; text-align: center; }
+.update-modal-title { font-size: 16px; font-weight: 700; color: var(--red); margin-bottom: 12px; }
+#update-modal-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
+#update-modal-countdown { font-size: 14px; font-weight: 600; color: var(--amber); margin-bottom: 12px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+#update-modal-progress { margin-bottom: 16px; }
+#update-modal-step { font-size: 12px; color: var(--kaspa-teal); margin-bottom: 6px; }
+#update-modal .btn-primary { width: 100%; }
+
+/* First-run + Recovery modals (Themes 3 + 5 of the 0.3.3 plan).
+   Same visual chrome as the Critical Update modal, just non-red borders
+   and primary-CTA buttons since these aren't urgent. */
+#firstrun-modal, #recovery-modal { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; }
+.modal-content { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 480px; width: 90%; max-height: 80vh; overflow-y: auto; }
+.firstrun-modal-content { max-width: 420px; text-align: center; }
+.recovery-modal-content { max-width: 520px; }
+.modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 10px; }
+.modal-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
+.modal-text p { margin: 6px 0; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.firstrun-modal-content .modal-actions { justify-content: center; }
+.recovery-input { width: 100%; padding: 10px 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; box-sizing: border-box; }
+.recovery-input:focus { outline: none; border-color: var(--kaspa-teal); }
+.recovery-error { margin-top: 8px; font-size: 12px; color: var(--red); padding: 8px 10px; background: rgba(255,80,80,0.08); border: 1px solid rgba(255,80,80,0.25); border-radius: 6px; }
+#recovery-matches-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.recovery-match { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color 0.15s; }
+.recovery-match:hover { border-color: var(--kaspa-teal); }
+.recovery-match.selected { border-color: var(--kaspa-teal); background: var(--kaspa-teal-dim); }
+.recovery-match input[type="radio"] { margin-top: 2px; }
+.recovery-match-body { flex: 1; min-width: 0; }
+.recovery-match-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.recovery-match-stats { font-size: 11px; color: var(--text-secondary); margin-top: 2px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.recovery-match-id { font-size: 10px; color: var(--text-secondary); margin-top: 2px; font-family: 'Cascadia Code', 'Fira Code', monospace; opacity: 0.7; word-break: break-all; }
+
+/* Utility */
+.hidden { display: none !important; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
