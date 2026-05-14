@@ -50,6 +50,12 @@ electron_1.contextBridge.exposeInMainWorld('mykai', {
          *  fresh identity. The renderer should show a confirmation dialog
          *  BEFORE calling this — it's irreversible. */
         resetIdentity: () => electron_1.ipcRenderer.invoke('config:reset-identity'),
+        /** v0.4: fired when nodeStorageMode or retentionDays changes via
+         *  config:set. Payload: { oldMode, newMode, oldRetentionDays,
+         *  newRetentionDays, requiresFullResync, requiresKaspadRestart }.
+         *  Renderer shows the appropriate confirmation dialog and may
+         *  trigger kaspad restart. */
+        onStorageModeChanged: (cb) => { electron_1.ipcRenderer.on('config:storage-mode-changed', (_e, info) => cb(info)); },
     },
     recovery: {
         /** Look up nodes by accountKey or nodeId. Returns

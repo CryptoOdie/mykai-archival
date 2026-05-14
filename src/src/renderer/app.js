@@ -279,6 +279,68 @@ window.mykai.node.onUtxoResync((data) => handleUtxoResync(data));
 window.mykai.finality.onUpdate((stats) => updateFinalityStats(stats));
 window.mykai.finality.onChainFlip((flip) => handleChainFlip(flip));
 
+// v0.4: storage-mode change handler. Main process fires this from
+// ipc-handlers.js after config:set persists. Renderer shows the right
+// confirmation dialog (especially for the destructive pruned->archival
+// transition which requires a kaspad re-sync from network) and triggers
+// the kaspad restart so the new flags take effect.
+window.mykai.config.onStorageModeChanged?.((info) => {
+  const { oldMode, newMode, requiresFullResync } = info;
+  if (oldMode === newMode) return; // retention-days-only change; no friction needed
+  // Going INTO archival from pruned/retention: this is the big one — kaspad
+  // will start collecting history from now forward (NOT recover past data).
+  // High-friction confirmation: type DELETE HISTORY to be sure.
+  if (newMode === 'archival' && requiresFullResync) {
+    const confirmText = 'KEEP ARCHIVE';
+    const typed = window.prompt(
+      'Enabling archival mode\n\n' +
+      'Your node will stop deleting old blocks and start growing forever\n' +
+      '(~1-2 GB per day after the initial archive is rebuilt).\n\n' +
+      'IMPORTANT: This does NOT recover history from BEFORE you enable archival.\n' +
+      'Your node only archives blocks from now forward. To get older history,\n' +
+      'import a snapshot from another archival operator after enabling.\n\n' +
+      `Type "${confirmText}" to confirm:`,
+      ''
+    );
+    if (typed !== confirmText) {
+      addActivity('Archival mode change cancelled.');
+      // Revert the config silently.
+      window.mykai.config.set({ nodeStorageMode: oldMode });
+      // Reload settings UI to show the reverted state.
+      loadSettings();
+      return;
+    }
+    addActivity('Archival mode enabled — restarting kaspad with --archival flag.');
+    window.mykai.node.restart?.();
+    return;
+  }
+  // Leaving archival: kaspad will gradually delete accumulated history on
+  // the next pruning advance. Type DELETE HISTORY to confirm.
+  if (oldMode === 'archival' && newMode !== 'archival') {
+    const confirmText = 'DELETE HISTORY';
+    const typed = window.prompt(
+      'Disabling archival mode\n\n' +
+      'Your node will start deleting historical blocks. This cannot be undone\n' +
+      'without re-importing or re-syncing an archive (which you cannot do\n' +
+      'from the network without help).\n\n' +
+      `Type "${confirmText}" to confirm:`,
+      ''
+    );
+    if (typed !== confirmText) {
+      addActivity('Archival mode change cancelled.');
+      window.mykai.config.set({ nodeStorageMode: 'archival' });
+      loadSettings();
+      return;
+    }
+    addActivity(`Archival mode disabled — switching to ${newMode}. Kaspad will gradually prune.`);
+    window.mykai.node.restart?.();
+    return;
+  }
+  // pruned <-> retention transitions are non-destructive; just restart kaspad.
+  addActivity(`Storage mode changed: ${oldMode} → ${newMode}. Restarting kaspad.`);
+  window.mykai.node.restart?.();
+});
+
 // --- Info-icon click-to-pin popover ---
 // Native HTML title="" already shows on hover, but Windows suppresses it
 // the moment you click. Users expect the click to PIN the explanation
@@ -820,6 +882,24 @@ async function loadSettings() {
   $('#setting-launch-startup').checked = cfg.launchOnStartup !== false;
   $('#setting-tray').checked = cfg.minimizeToTray;
   $('#setting-peers').value = cfg.outpeers;
+  // v0.4: storage mode controls
+  const storageMode = cfg.nodeStorageMode || 'pruned';
+  $('#setting-storage-mode').value = storageMode;
+  $('#setting-retention-days').value = cfg.retentionDays || 30;
+  // Show/hide retention slider only in retention mode
+  $('#retention-days-row').style.display = (storageMode === 'retention') ? '' : 'none';
+  // Show only the hint matching the active mode
+  $('#storage-mode-hint-pruned').style.display    = (storageMode === 'pruned')    ? '' : 'none';
+  $('#storage-mode-hint-retention').style.display = (storageMode === 'retention') ? '' : 'none';
+  $('#storage-mode-hint-archival').style.display  = (storageMode === 'archival')  ? '' : 'none';
+  // Disable archival option on testnet (kaspad would refuse anyway, but
+  // surface the reason in the UI rather than letting the user try and fail).
+  const archivalOption = $('#setting-storage-mode').querySelector('option[value="archival"]');
+  if (archivalOption) {
+    const isTestnet = cfg.network === 'testnet';
+    archivalOption.disabled = isTestnet;
+    $('#storage-mode-hint-testnet').style.display = isTestnet ? '' : 'none';
+  }
   $('#setting-datadir').textContent = cfg.dataDir;
   // Re-use the value already displayed in the main Stats grid. No disk walk.
   $('#setting-storage').textContent = $('#stat-storage').textContent || '—';
@@ -967,6 +1047,31 @@ $('#btn-check-updates').addEventListener('click', async (e) => {
 
 $('#setting-mode').addEventListener('change', (e) => {
   $('#remote-settings').classList.toggle('hidden', e.target.value !== 'remote');
+});
+
+// v0.4: storage mode picker — show the matching hint + the retention slider
+// only when applicable. The actual save happens on btn-save-settings.
+$('#setting-storage-mode').addEventListener('change', (e) => {
+  const mode = e.target.value;
+  $('#retention-days-row').style.display = (mode === 'retention') ? '' : 'none';
+  $('#storage-mode-hint-pruned').style.display    = (mode === 'pruned')    ? '' : 'none';
+  $('#storage-mode-hint-retention').style.display = (mode === 'retention') ? '' : 'none';
+  $('#storage-mode-hint-archival').style.display  = (mode === 'archival')  ? '' : 'none';
+});
+
+// v0.4: re-evaluate testnet/archival disable when the network field changes.
+// (Network change itself triggers settings-dirty via the panel-level listener.)
+$('#setting-network').addEventListener('change', (e) => {
+  const isTestnet = e.target.value === 'testnet';
+  const archivalOption = $('#setting-storage-mode').querySelector('option[value="archival"]');
+  if (archivalOption) archivalOption.disabled = isTestnet;
+  $('#storage-mode-hint-testnet').style.display = isTestnet ? '' : 'none';
+  // If user was on archival and switches to testnet, force-pick pruned to
+  // prevent saving an invalid combo. They can re-pick after switching back.
+  if (isTestnet && $('#setting-storage-mode').value === 'archival') {
+    $('#setting-storage-mode').value = 'pruned';
+    $('#setting-storage-mode').dispatchEvent(new Event('change'));
+  }
 });
 
 $('#setting-kasmap-enabled').addEventListener('change', (e) => {
@@ -1195,12 +1300,19 @@ document.addEventListener('click', (e) => {
 });
 
 $('#btn-save-settings').addEventListener('click', async () => {
+  // v0.4: clamp retention days to kaspad's hard floor of 2 (panics below).
+  const retentionDaysRaw = parseInt($('#setting-retention-days').value, 10) || 0;
+  const retentionDays = retentionDaysRaw >= 2 ? retentionDaysRaw : 0;
   await window.mykai.config.set({
     network: $('#setting-network').value,
     nodeMode: $('#setting-mode').value,
     remoteUrl: $('#setting-remote-url').value.trim(),
     nodeVisibility: $('#setting-visibility').value,
-    contributeMonitoring: true,
+    // v0.4: telemetry is now opt-in via Privacy section, NOT hardcoded true.
+    // Reads the actual checkbox state. Sovereign-fork ethos: never call home
+    // without explicit consent. Existing v0.3.x users were migrated to false
+    // in config-store.js DEFAULTS.
+    contributeMonitoring: $('#setting-contribute-monitoring')?.checked === true,
     shareErrorDiagnostics: $('#setting-share-diagnostics').checked,
     preventSleepDuringSetup: $('#setting-prevent-sleep').checked,
     autoUpdate: $('#setting-autoupdate').checked,
@@ -1209,6 +1321,9 @@ $('#btn-save-settings').addEventListener('click', async () => {
     autoStart: true,
     minimizeToTray: $('#setting-tray').checked,
     outpeers: parseInt($('#setting-peers').value, 10),
+    // v0.4: storage mode + retention days
+    nodeStorageMode: $('#setting-storage-mode').value,
+    retentionDays: retentionDays,
     kasmap: {
       enabled: $('#setting-kasmap-enabled').checked,
       token: $('#setting-kasmap-token').value.trim(),

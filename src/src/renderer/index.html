@@ -309,6 +309,32 @@
         <label>Outbound peers</label>
         <input type="number" id="setting-peers" min="1" max="128" value="64">
       </div>
+      <!-- v0.4: storage mode -->
+      <h3 style="margin-top:24px;">Storage</h3>
+      <div class="setting-row" title="How much blockchain history your node keeps on disk.">
+        <label>Storage mode</label>
+        <select id="setting-storage-mode">
+          <option value="pruned">Pruned — small (~30 GB, last ~30 hours of data)</option>
+          <option value="retention">Retention — keep N days of history</option>
+          <option value="archival">Archival — keep everything (~1.5 TB and growing)</option>
+        </select>
+      </div>
+      <div class="setting-row" id="retention-days-row" style="display:none;" title="How many days of historical blocks to retain. Minimum 2 days.">
+        <label>Retention period (days)</label>
+        <input type="number" id="setting-retention-days" min="2" max="3650" value="30">
+      </div>
+      <div class="setting-hint" id="storage-mode-hint-pruned" style="display:none;">
+        Default. Your node validates the chain but discards old blocks. ~30 GB disk.
+      </div>
+      <div class="setting-hint" id="storage-mode-hint-retention" style="display:none;">
+        Keep the last N days of blocks. Disk usage grows roughly with N (current chain rate ≈ 1 GB/day).
+      </div>
+      <div class="setting-hint" id="storage-mode-hint-archival" style="display:none;color:var(--kaspa-amber,#f5a623);">
+        Keep all blocks since you enable archival. Disk usage starts at ~1.5 TB and grows ~10–20 GB/month. Switching to archival now does NOT recover history from before the switch — your node only archives forward from today. To get older history, import a snapshot from another archival operator after switching.
+      </div>
+      <div class="setting-hint" id="storage-mode-hint-testnet" style="display:none;color:var(--kaspa-amber,#f5a623);">
+        Archival mode is disabled on testnet because testnet resets can permanently delete archival data. Switch to mainnet to use archival.
+      </div>
       <div class="setting-row" title="Where the blockchain data is stored on your computer.">
         <label>Data directory</label>
         <div style="display:flex;align-items:center;gap:8px;">
