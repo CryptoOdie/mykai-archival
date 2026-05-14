@@ -886,6 +886,10 @@ async function loadSettings() {
   const storageMode = cfg.nodeStorageMode || 'pruned';
   $('#setting-storage-mode').value = storageMode;
   $('#setting-retention-days').value = cfg.retentionDays || 30;
+  // v0.5: shard contribution slider
+  const shardSizeGB = cfg.shardSizeGB || 0;
+  $('#setting-shard-size-gb').value = shardSizeGB;
+  updateShardSizeHint(shardSizeGB);
   // Show/hide retention slider only in retention mode
   $('#retention-days-row').style.display = (storageMode === 'retention') ? '' : 'none';
   // Show only the hint matching the active mode
@@ -1047,6 +1051,32 @@ $('#btn-check-updates').addEventListener('click', async (e) => {
 
 $('#setting-mode').addEventListener('change', (e) => {
   $('#remote-settings').classList.toggle('hidden', e.target.value !== 'remote');
+});
+
+// v0.5: shard contribution hint — update text based on the value.
+function updateShardSizeHint(gb) {
+  const hint = document.getElementById('shard-size-hint');
+  if (!hint) return;
+  const n = Number(gb) || 0;
+  if (n === 0) {
+    hint.textContent = '0 GB = feature off (your node still helps Kaspa by being a normal node).';
+    hint.style.color = '';
+  } else if (n < 50) {
+    hint.textContent = `${n} GB — small contribution, helpful for recent blocks. App restart required.`;
+    hint.style.color = '';
+  } else if (n < 500) {
+    hint.textContent = `${n} GB — meaningful contribution. App restart required after save.`;
+    hint.style.color = '';
+  } else if (n < 2000) {
+    hint.textContent = `${n} GB — large contribution; covers significant historical depth. Verify your disk has the space + headroom. App restart required.`;
+    hint.style.color = 'var(--kaspa-amber,#f5a623)';
+  } else {
+    hint.textContent = `${n} GB — power-user / dedicated archive operator territory. Confirm your hardware can sustain this. App restart required.`;
+    hint.style.color = 'var(--kaspa-amber,#f5a623)';
+  }
+}
+$('#setting-shard-size-gb').addEventListener('input', (e) => {
+  updateShardSizeHint(e.target.value);
 });
 
 // v0.4: storage mode picker — show the matching hint + the retention slider
@@ -1324,6 +1354,8 @@ $('#btn-save-settings').addEventListener('click', async () => {
     // v0.4: storage mode + retention days
     nodeStorageMode: $('#setting-storage-mode').value,
     retentionDays: retentionDays,
+    // v0.5: archival contribution amount in GB (0 = feature off)
+    shardSizeGB: Math.max(0, parseInt($('#setting-shard-size-gb').value, 10) || 0),
     kasmap: {
       enabled: $('#setting-kasmap-enabled').checked,
       token: $('#setting-kasmap-token').value.trim(),

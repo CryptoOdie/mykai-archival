@@ -335,6 +335,20 @@
       <div class="setting-hint" id="storage-mode-hint-testnet" style="display:none;color:var(--kaspa-amber,#f5a623);">
         Archival mode is disabled on testnet because testnet resets can permanently delete archival data. Switch to mainnet to use archival.
       </div>
+
+      <!-- v0.5: archival contribution slider — the new "feature" of MyKAI Node -->
+      <h3 style="margin-top:24px;">Help preserve Kaspa history (optional)</h3>
+      <div class="setting-hint" style="margin-top:0;">
+        Your node already validates the chain. Optionally, donate some disk space to help store Kaspa's history — your node will catch blocks just before they would be pruned, hold them, and serve them back to others who need them. Default: 0 GB (feature off). MyKAI Node still works perfectly without it.
+      </div>
+      <div class="setting-row" title="How much disk space to commit to the distributed archive. 0 = feature off. Recommended: 50 GB for laptops, 200 GB for desktops, 1000+ GB for dedicated archival operators.">
+        <label>Contribute (GB)</label>
+        <input type="number" id="setting-shard-size-gb" min="0" max="20000" step="10" value="0">
+      </div>
+      <div class="setting-hint" id="shard-size-hint">
+        0 GB = feature off (your node still helps Kaspa by being a normal node).
+      </div>
+
       <div class="setting-row" title="Where the blockchain data is stored on your computer.">
         <label>Data directory</label>
         <div style="display:flex;align-items:center;gap:8px;">
