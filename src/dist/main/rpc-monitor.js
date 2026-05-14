@@ -902,16 +902,22 @@ class RpcMonitor extends events_1.EventEmitter {
             if (typeof blueScore === 'number' && blueScore > this._sinkBlueScore) {
                 this._sinkBlueScore = blueScore;
             }
+            // v0.5: include daaScore + rawBlock for the shard-storage subscriber.
+            // Existing consumers ignore these new fields. daaScore is the field
+            // kaspad uses for pruning decisions, so it's the right archival anchor.
+            const daaScore = Number(header.daaScore ?? header.daa_score ?? 0);
             // First-seen timestamp for propagation analysis
             this.emit('block-added', {
                 hash,
                 selectedParentHash: selectedParent,
                 blueScore,
+                daaScore,
                 parentCount,
                 timestamp: blockTimestamp,
                 txCount: block.transactions?.length || 0,
                 parents,
                 ts,
+                rawBlock: block,
             });
             // Red-block detection moved to VirtualChainChanged + explicit getBlock.
             // Kaspad's BlockAdded notification path falls back to a verbose-less

@@ -48,6 +48,13 @@ const DEFAULTS = {
     // Mutually exclusive at the kaspad layer; archival wins if both somehow set.
     nodeStorageMode: 'pruned',
     retentionDays: 0,
+    // v0.5: shard-storage contribution budget in GB.
+    // 0 = feature off (no archival contribution; pure Kaspa node behavior).
+    // >0 = shard module captures blocks from local kaspad before pruning,
+    //      holds up to this many GB, rolls oldest out when budget hit.
+    // Recommended starting points: 50 GB for laptops, 200 GB for desktops,
+    // 1000 GB for power users / dedicated archive operators.
+    shardSizeGB: 0,
 };
 class ConfigStore {
     store;
@@ -255,6 +262,8 @@ class ConfigStore {
             // 'pruned' | 'retention' | 'archival' — see DEFAULTS for semantics.
             nodeStorageMode: this.store.get('nodeStorageMode') || 'pruned',
             retentionDays: this.store.get('retentionDays') || 0,
+            // v0.5: shard-storage budget in GB. 0 = disabled.
+            shardSizeGB: this.store.get('shardSizeGB') || 0,
         };
     }
     setAll(config) {

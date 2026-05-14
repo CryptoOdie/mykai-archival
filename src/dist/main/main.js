@@ -99,9 +99,16 @@ const dir_size_1 = require("./dir-size");
 const session_log_1 = require("./session-log");
 const perf_hot_1 = require("./perf-hot");
 const fs_1 = __importDefault(require("fs"));
+// v0.5: shard-storage module — optional archival contribution feature
+const shard_storage_1 = require("./shard-storage");
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+// v0.5: shard storage instance. Created in initialize() if user has
+// shardSizeGB > 0. Null otherwise (feature off, pure Kaspa node behavior).
+let shardStorage = null;
+let shardPruneTimer = null;
+let _loggedShardCaptureError = false;
 let manager;
 let monitor;
 let config;
@@ -557,6 +564,38 @@ async function initialize() {
     else {
         monitor = new rpc_monitor_1.RpcMonitor(appConfig.jsonPort, appConfig.borshPort);
     }
+    // v0.5: initialize the shard-storage module IF user has opted in.
+    // shardSizeGB == 0 means feature is off — pure Kaspa node, no module init,
+    // no extra resource use, no behavior change from v0.3.x.
+    // shardSizeGB > 0 means user wants to contribute that many GB to the
+    // distributed archive. We start the module + periodic pruning.
+    if (appConfig.shardSizeGB && appConfig.shardSizeGB > 0) {
+        try {
+            shardStorage = new shard_storage_1.ShardStorage(electron_1.app.getPath('userData'));
+            shardStorage.on('log', (msg) => {
+                mainWindow?.webContents.send('node:activity', `Shard: ${msg}`);
+            });
+            shardStorage.on('error', (info) => {
+                mainWindow?.webContents.send('node:activity', `Shard ${info.stage} error: ${info.error}`);
+            });
+            await shardStorage.init();
+            const stats = shardStorage.getStats();
+            mainWindow?.webContents.send('node:activity',
+                `Shard storage ready: ${stats.blockCount} blocks, ${(stats.totalBytes / 1024 / 1024).toFixed(1)} MB held, budget ${appConfig.shardSizeGB} GB`);
+            // Periodic pruning to enforce disk budget. Cheap to call; pruneToFit
+            // returns immediately when under budget. Run every 5 minutes.
+            shardPruneTimer = setInterval(() => {
+                if (!shardStorage) return;
+                const budgetBytes = (appConfig.shardSizeGB || 0) * 1024 * 1024 * 1024;
+                shardStorage.pruneToFit(budgetBytes);
+            }, 5 * 60_000);
+        }
+        catch (err) {
+            mainWindow?.webContents.send('node:activity',
+                `Shard storage failed to init: ${err?.message || err}. Continuing without archival contribution.`);
+            shardStorage = null;
+        }
+    }
     // Begin sampling CPU% every 5 s. Replaces `os.loadavg()[0]` which
     // is always 0 on Windows. Read by getSystemLoad() during diagnostic
     // build — gives us the aggregated "is the whole machine struggling
@@ -931,6 +970,32 @@ async function initialize() {
         // for hours while the node was actually fully operational.
         manager.markUtxoRebuildComplete();
         (0, perf_hot_1.endMark)('handler.block-added', __m);
+    });
+    // v0.5: shard-storage capture subscriber. Only fires when feature enabled
+    // (shardStorage instance exists). Captures each block's full body from the
+    // notification — no extra RPC call needed because the wRPC blockAdded
+    // notification already contains block.transactions inline.
+    //
+    // Body is serialized as JSON for v0.5 MVP (sql.js can't store complex
+    // objects directly). Migration to Borsh-encoded binary in v0.6 along with
+    // native SQLite. JSON adds ~30% overhead vs Borsh — acceptable for now.
+    monitor.on('block-added', (block) => {
+        if (!shardStorage || !block.rawBlock) return;
+        try {
+            // Convert hex hash to 32-byte buffer for SQLite BLOB primary key.
+            const hashBytes = Buffer.from(block.hash, 'hex');
+            if (hashBytes.length !== 32) return; // malformed
+            const bodyJson = Buffer.from(JSON.stringify(block.rawBlock), 'utf-8');
+            shardStorage.captureBlock(hashBytes, block.daaScore || 0, bodyJson, true);
+        }
+        catch (err) {
+            // Capture failures are non-fatal — kaspad still has the block,
+            // we just don't shard it. Log once-per-error-type to avoid spam.
+            if (!_loggedShardCaptureError) {
+                _loggedShardCaptureError = true;
+                mainWindow?.webContents.send('node:activity', `Shard capture error: ${err?.message || err} (further errors suppressed)`);
+            }
+        }
     });
     // Live TPS from subscription (replaces log-parsed TPS when available)
     monitor.on('tps-update', (tps) => {
@@ -1771,6 +1836,18 @@ else {
             await manager.stop();
         }
         catch { /* ignore */ }
+        // v0.5: shard storage cleanup — persist pending writes and close DB.
+        if (shardPruneTimer) {
+            clearInterval(shardPruneTimer);
+            shardPruneTimer = null;
+        }
+        if (shardStorage) {
+            try {
+                shardStorage.close();
+            }
+            catch { /* ignore */ }
+            shardStorage = null;
+        }
         electron_1.app.exit(0);
     });
     electron_1.app.on('window-all-closed', () => { });
