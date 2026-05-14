@@ -533,6 +533,10 @@ async function initialize() {
         ramScale: appConfig.ramScale,
         utxoIndex: appConfig.utxoIndex,
         nodeVisibility: appConfig.nodeVisibility,
+        // v0.4: storage mode threaded through to buildArgs() for --archival /
+        // --retention-period-days kaspad flags. See config-store.js DEFAULTS.
+        nodeStorageMode: appConfig.nodeStorageMode || 'pruned',
+        retentionDays: appConfig.retentionDays || 0,
     });
     // In remote mode, parse the URL to get host and ports
     if (isRemote) {

@@ -25,8 +25,10 @@ const DEFAULTS = {
     autoStart: true,
     minimizeToTray: true,
     nodeVisibility: 'public',
-    contributeMonitoring: true,
-    shareErrorDiagnostics: true,
+    // Telemetry is now OPT-IN (changed from v0.3.8 which defaulted true).
+    // Sovereign-fork ethos: nothing phones home unless the user explicitly says yes.
+    contributeMonitoring: false,
+    shareErrorDiagnostics: false,
     preventSleepDuringSetup: true,
     autoUpdate: true,
     nodeId: '',
@@ -39,6 +41,13 @@ const DEFAULTS = {
     hiddenNodeIds: [],
     theme: 'dark',
     launchOnStartup: true,
+    // Storage mode — controls whether kaspad prunes, retains-N-days, or archives.
+    // 'pruned'    → kaspad default (~30 GB disk, ~30h retention post-Crescendo)
+    // 'retention' → --retention-period-days=N (N>=2)
+    // 'archival'  → --archival (keeps all blocks since flip; ~1.5 TB and growing)
+    // Mutually exclusive at the kaspad layer; archival wins if both somehow set.
+    nodeStorageMode: 'pruned',
+    retentionDays: 0,
 };
 class ConfigStore {
     store;
@@ -75,6 +84,17 @@ class ConfigStore {
         }
         if (!this.store.get('nodeVisibility')) {
             this.store.set('nodeVisibility', 'public');
+        }
+        // Migration v0.3.x → v0.4: storage mode is a new tri-state config.
+        // Pre-v0.4 installs were silently running pruned. Default them to
+        // 'pruned' so behavior is unchanged on upgrade. Never silently flip
+        // an existing user to archival — that would trigger a 3 TB re-sync
+        // on next launch.
+        if (this.store.get('nodeStorageMode') === undefined) {
+            this.store.set('nodeStorageMode', 'pruned');
+        }
+        if (this.store.get('retentionDays') === undefined) {
+            this.store.set('retentionDays', 0);
         }
         // Identity restore — runs BEFORE the fresh-key generation below.
         // If electron-store has nothing but Documents\MyKAI\identity.json
@@ -227,6 +247,10 @@ class ConfigStore {
             hiddenNodeIds: this.store.get('hiddenNodeIds') || [],
             theme: this.store.get('theme') || 'dark',
             launchOnStartup: this.store.get('launchOnStartup') !== false,
+            // v0.4: storage mode is the primary new config axis.
+            // 'pruned' | 'retention' | 'archival' — see DEFAULTS for semantics.
+            nodeStorageMode: this.store.get('nodeStorageMode') || 'pruned',
+            retentionDays: this.store.get('retentionDays') || 0,
         };
     }
     setAll(config) {

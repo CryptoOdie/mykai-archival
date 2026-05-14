@@ -512,6 +512,27 @@ class KaspadManager extends events_1.EventEmitter {
         if (this.config.utxoIndex) {
             args.push('--utxoindex');
         }
+        // Storage mode — pruned is kaspad's default (no flag).
+        // Archival keeps all blocks since flip (~1.5 TB and growing).
+        // Retention keeps last N days (N >= 2; kaspad panics below).
+        // Mutually exclusive at the kaspad layer: archival wins if both set.
+        // Hard rule: archival on testnet is rejected here (TN12 --yes bypass
+        // can nuke data on testnet reset). UI also blocks this but we
+        // double-guard for hand-edited configs.
+        if (this.config.nodeStorageMode === 'archival') {
+            if (this.config.network === 'testnet') {
+                this.addLog('refusing to enable archival on testnet (data risk on testnet reset); falling back to pruned mode');
+            } else {
+                args.push('--archival');
+            }
+        } else if (this.config.nodeStorageMode === 'retention') {
+            const days = Math.max(2, parseInt(this.config.retentionDays, 10) || 0);
+            if (days >= 2) {
+                args.push(`--retention-period-days=${days}`);
+            }
+            // If days resolved to <2, fall through to kaspad's default (pruned).
+            // The UI clamps to >=2 so this branch is defensive only.
+        }
         args.push(`--outpeers=${this.config.outpeers}`);
         args.push(`--ram-scale=${this.config.ramScale}`);
         args.push('--loglevel=info');
