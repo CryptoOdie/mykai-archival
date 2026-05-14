@@ -71,8 +71,12 @@ class ConfigStore {
         return v;
     }
     constructor() {
+        // v0.4: separate config namespace from v0.3.8 so both can coexist.
+        // Users with a v0.3.8 install will see v0.4 start "fresh" config-wise,
+        // but identity (accountKey, nodeId) restores from Documents\MyKAI\
+        // identity_acc_*.json via identity-backup.js — see restoreIdentityIfNeeded.
         this.store = new electron_store_1.default({
-            name: 'mykai-node-config',
+            name: 'mykai-archival-config',
             defaults: DEFAULTS,
         });
         if (!this.store.get('dataDir')) {

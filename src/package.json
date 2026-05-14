@@ -1,6 +1,6 @@
 {
   "name": "mykai-archival",
-  "version": "0.4.0-dev",
+  "version": "0.5.0-dev",
   "description": "Sovereign Kaspa archival node host (fork of MyKAI Node)",
   "main": "dist/main/main.js",
   "author": "MyKAI Archival Contributors",
@@ -14,6 +14,7 @@
     "@supabase/supabase-js": "^2.102.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.3",
+    "sql.js": "^1.10.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {
