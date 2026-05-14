@@ -187,6 +187,58 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
         if (!opts?.getShardStats) return null;
         return opts.getShardStats();
     });
+    // v0.5: hardware probe for the Archive Pool page. Bundles disk + RAM +
+    // CPU info plus a recommended contribution based on the user's machine.
+    // Recommendation algorithm:
+    //   - disk_bound = free_disk * 0.7  (leave 30% for OS + user)
+    //   - ram_bound by pinset table from research (50 GB ≈ +1.5 GB RAM, etc.)
+    //   - recommended = min(disk_bound, ram_bound), floored to nice multiple
+    track('pool:hardware-probe', () => {
+        const hostSpecs = require('./host-specs').getHostSpecs();
+        const { getFreeBytes, getTotalBytes } = require('./disk-monitor');
+        const dataDir = config.get('dataDir');
+        const freeDiskBytes = getFreeBytes(dataDir);
+        const totalDiskBytes = getTotalBytes(dataDir);
+        // Reserve baseline RAM for OS + kaspad. The remaining RAM can fund
+        // the shard module's working set. Pinset-to-RAM mapping from
+        // empirical research (see project memory rule #21):
+        //   10 GB pinset  ≈ +0.5 GB RAM
+        //   50 GB         ≈ +1.5 GB
+        //   200 GB        ≈ +3.5 GB
+        //   1 TB          ≈ +6 GB
+        //   1.5 TB        ≈ +9 GB
+        // Solve for max pinset that fits in available RAM headroom.
+        const ramFreeBytes = hostSpecs.ramFreeBytes;
+        const ramHeadroomBytes = Math.max(0, ramFreeBytes - 4 * 1024 * 1024 * 1024); // reserve 4 GB
+        // Linear approximation: ~3 MB RAM per GB pinset above the baseline
+        const ramBoundGB = Math.floor(ramHeadroomBytes / (3 * 1024 * 1024));
+        // Disk: leave 30% buffer for OS + user + kaspad's own 30 GB
+        const diskHeadroomBytes = Math.max(0, freeDiskBytes - 30 * 1024 * 1024 * 1024);
+        const diskBoundGB = Math.floor(diskHeadroomBytes * 0.7 / (1024 * 1024 * 1024));
+        // Final recommendation: min of the two, snapped to a nice multiple of 10
+        const rawRec = Math.min(ramBoundGB, diskBoundGB);
+        let recommended = 0;
+        if (rawRec >= 10) {
+            // Snap to nice rungs: 10, 25, 50, 100, 200, 500, 1000, 2000
+            const rungs = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000];
+            recommended = rungs.filter(r => r <= rawRec).pop() || 10;
+        }
+        return {
+            ramTotalBytes: hostSpecs.ramBytes,
+            ramFreeBytes: hostSpecs.ramFreeBytes,
+            ramFreeGB: Math.round(hostSpecs.ramFreeBytes / (1024 * 1024 * 1024) * 10) / 10,
+            cpuCores: hostSpecs.cpuCount,
+            cpuModel: hostSpecs.cpuModel,
+            cpuSpeedMHz: hostSpecs.cpuSpeedMHz,
+            diskTotalBytes: totalDiskBytes,
+            diskFreeBytes: freeDiskBytes,
+            diskFreeGB: Math.round(freeDiskBytes / (1024 * 1024 * 1024) * 10) / 10,
+            currentContributionGB: config.get('shardSizeGB') || 0,
+            recommendedGB: recommended,
+            // Bounds for the UI slider — never offer more than the machine can handle.
+            maxRecommendedGB: Math.max(0, Math.floor(Math.min(ramBoundGB, diskBoundGB))),
+        };
+    });
     track('kasmap:verify', async (_event, token) => {
         return await kasmap.verify(token);
     });

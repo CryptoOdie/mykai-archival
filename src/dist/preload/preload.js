@@ -57,8 +57,14 @@ electron_1.contextBridge.exposeInMainWorld('mykai', {
          *  trigger kaspad restart. */
         onStorageModeChanged: (cb) => { electron_1.ipcRenderer.on('config:storage-mode-changed', (_e, info) => cb(info)); },
     },
-    /** v0.5: shard storage status. Polled by the dashboard widget every 10s.
-     *  Returns null when feature is off (shardSizeGB == 0). */
+    /** v0.5: Archive Pool — pooled distributed archive of Kaspa history.
+     *  Status (always available, returns null when feature off) and hardware
+     *  probe (always works — used by the Pool page to size the recommendation). */
+    pool: {
+        stats: () => electron_1.ipcRenderer.invoke('shard:stats'),
+        hardwareProbe: () => electron_1.ipcRenderer.invoke('pool:hardware-probe'),
+    },
+    // Back-compat alias — older renderer code references .shard.stats
     shard: {
         stats: () => electron_1.ipcRenderer.invoke('shard:stats'),
     },

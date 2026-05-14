@@ -261,7 +261,10 @@
     <div id="activity-feed">
       <div class="activity-header">
         <span class="section-header">Activity</span>
-        <a href="#" id="btn-settings" class="settings-link">&#x2699; Settings</a>
+        <span style="display:flex;gap:14px;align-items:center;">
+          <a href="#" id="btn-pool" class="settings-link" title="Archive Pool — contribute disk to a distributed Kaspa archive">&#x25C9; Archive Pool</a>
+          <a href="#" id="btn-settings" class="settings-link">&#x2699; Settings</a>
+        </span>
       </div>
       <div id="activity-list"></div>
     </div>
@@ -274,6 +277,93 @@
       <div id="mining-workers-empty" class="setting-hint">No miners connected yet. Point your ASIC to the stratum URL shown above.</div>
       <h3 style="margin-top:16px">Mining Log</h3>
       <div id="mining-log-output" style="max-height:200px;overflow-y:auto;font-size:11px;color:var(--text-secondary);background:var(--bg-primary);border-radius:6px;padding:8px;font-family:monospace"></div>
+    </div>
+
+    <!-- v0.5: Archive Pool panel — dedicated page accessed via header button -->
+    <div id="pool-panel" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3 style="margin:0;">&#x25C9; Archive Pool</h3>
+        <a href="#" id="btn-close-pool" class="settings-link">&#x2715; Close</a>
+      </div>
+      <div class="setting-hint" style="margin-top:0;margin-bottom:18px;">
+        Pool your disk space with other MyKAI users to preserve Kaspa's history. Your node catches blocks before kaspad prunes them, holds them locally, and serves them back to other pool participants. Optional — set 0 GB to stay out. Your node still works normally either way.
+      </div>
+
+      <!-- YOUR MACHINE — hardware probe -->
+      <div style="border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:12px 14px;margin-bottom:14px;">
+        <div style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);margin-bottom:8px;">YOUR MACHINE</div>
+        <div id="pool-hw-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px 16px;font-size:0.9em;">
+          <div>Free disk: <strong id="pool-hw-disk">probing…</strong></div>
+          <div>Free RAM: <strong id="pool-hw-ram">probing…</strong></div>
+          <div>CPU: <strong id="pool-hw-cpu">probing…</strong></div>
+          <div>Power: <strong id="pool-hw-power">probing…</strong></div>
+        </div>
+        <div id="pool-hw-warning" style="margin-top:8px;color:var(--kaspa-amber,#f5a623);font-size:0.85em;display:none;"></div>
+      </div>
+
+      <!-- POOL RECOMMENDATION + slider -->
+      <div style="border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:12px 14px;margin-bottom:14px;">
+        <div style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);margin-bottom:8px;">POOL RECOMMENDATION FOR YOU</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;">
+          <div>
+            <div style="font-size:0.8em;color:var(--text-secondary);">Minimum useful</div>
+            <div id="pool-rec-min" style="font-size:1.1em;font-weight:600;">—</div>
+          </div>
+          <div style="border-left:2px solid var(--kaspa-teal,#49eacb);border-right:2px solid var(--kaspa-teal,#49eacb);padding:0 12px;">
+            <div style="font-size:0.8em;color:var(--text-secondary);">Recommended</div>
+            <div id="pool-rec-mid" style="font-size:1.4em;font-weight:700;color:var(--kaspa-teal,#49eacb);">—</div>
+          </div>
+          <div>
+            <div style="font-size:0.8em;color:var(--text-secondary);">Stretch max</div>
+            <div id="pool-rec-max" style="font-size:1.1em;font-weight:600;">—</div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;">
+          <label for="pool-slider" style="font-size:0.9em;">Your contribution:
+            <strong id="pool-slider-value" style="font-size:1.1em;">0 GB</strong>
+          </label>
+          <input type="range" id="pool-slider" min="0" max="2000" step="10" value="0" style="width:100%;margin-top:6px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.75em;color:var(--text-secondary);">
+            <span>0</span><span>500</span><span>1000</span><span>2000+</span>
+          </div>
+        </div>
+
+        <div id="pool-impact" style="margin-top:14px;padding:10px 12px;background:var(--bg-secondary,#1a1a1a);border-radius:4px;font-size:0.9em;">
+          0 GB = not in the pool. Your node still validates the chain normally.
+        </div>
+
+        <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+          <button id="btn-pool-save" class="btn-primary" style="padding:6px 16px;">Join the pool</button>
+          <span id="pool-save-status" style="font-size:0.85em;color:var(--text-secondary);"></span>
+        </div>
+      </div>
+
+      <!-- LIVE STATUS — visible when joined -->
+      <div id="pool-live-status" class="hidden" style="border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:12px 14px;">
+        <div style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);margin-bottom:8px;display:flex;justify-content:space-between;">
+          <span>POOL STATUS — LIVE</span>
+          <span id="pool-live-daa-range" style="font-weight:400;color:var(--text-secondary);">—</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Blocks held</div>
+            <div id="pool-live-blocks" style="font-size:1.2em;font-weight:600;">0</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Disk used</div>
+            <div id="pool-live-used" style="font-size:1.2em;font-weight:600;">0 MB</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Budget</div>
+            <div id="pool-live-budget" style="font-size:1.2em;font-weight:600;">0 GB</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Captures / min</div>
+            <div id="pool-live-rate" style="font-size:1.2em;font-weight:600;">0</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Settings Panel -->
@@ -362,19 +452,7 @@
         Archival mode is disabled on testnet because testnet resets can permanently delete archival data. Switch to mainnet to use archival.
       </div>
 
-      <!-- v0.5: Archive Pool — pooled distributed archival storage feature -->
-      <h3 style="margin-top:24px;">Archive Pool</h3>
-      <div class="setting-hint" style="margin-top:0;">
-        Pool your disk with other MyKAI users to keep Kaspa's history alive. Your node catches blocks before kaspad prunes them, holds them in a local store, and serves them to other pool participants. Optional — 0 GB = not in the pool. MyKAI Node works as a normal pruned Kaspa node either way.
-      </div>
-      <div class="setting-row" title="Disk space to contribute to the pool. 0 = not joined. Typical: 50 GB laptop, 200 GB desktop, 1000+ GB dedicated archive operator.">
-        <label>Contribute (GB)</label>
-        <input type="number" id="setting-shard-size-gb" min="0" max="20000" step="10" value="0">
-      </div>
-      <div class="setting-hint" id="shard-size-hint">
-        0 GB = not in the pool. Your node still validates the chain normally.
-      </div>
-
+      <!-- Archive Pool moved to its own page (header button); kept this comment as a breadcrumb -->
       <div class="setting-row" title="Where the blockchain data is stored on your computer.">
         <label>Data directory</label>
         <div style="display:flex;align-items:center;gap:8px;">

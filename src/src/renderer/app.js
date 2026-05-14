@@ -316,6 +316,21 @@ async function refreshShardCard() {
       status = 'waiting for kaspad…';
     }
     document.getElementById('shard-card-status').textContent = status;
+    // v0.5: also update the Pool page's live status section if visible.
+    const livePanel = document.getElementById('pool-live-status');
+    if (livePanel) {
+      livePanel.classList.remove('hidden');
+      document.getElementById('pool-live-blocks').textContent = (stats.blockCount || 0).toLocaleString();
+      document.getElementById('pool-live-used').textContent = formatBytesShort(stats.totalBytes || 0);
+      document.getElementById('pool-live-budget').textContent = (stats.budgetGB || 0) + ' GB';
+      document.getElementById('pool-live-rate').textContent = String(stats.capturedLast60s || 0);
+      if (stats.blockCount > 0 && stats.oldestDaa != null && stats.newestDaa != null) {
+        document.getElementById('pool-live-daa-range').textContent =
+          `DAA ${stats.oldestDaa.toLocaleString()} → ${stats.newestDaa.toLocaleString()}`;
+      } else {
+        document.getElementById('pool-live-daa-range').textContent = 'waiting for kaspad…';
+      }
+    }
   } catch (err) {
     // Silent — feature might not be wired yet on older main process versions.
   }
@@ -843,11 +858,106 @@ $('#btn-copy-endpoint').addEventListener('click', async () => {
 });
 
 // --- Panel Switching ---
+// v0.5: archive pool panel — has its own header button, sibling to Settings.
+// Populates the hardware probe on each open, wires live slider feedback.
+async function openPoolPanel() {
+  const probe = await window.mykai.pool.hardwareProbe();
+  if (!probe) return;
+  // Fill hardware row
+  $('#pool-hw-disk').textContent = `${probe.diskFreeGB.toFixed(1)} GB free`;
+  $('#pool-hw-ram').textContent = `${probe.ramFreeGB.toFixed(1)} GB free`;
+  $('#pool-hw-cpu').textContent = `${probe.cpuCores} cores @ ${(probe.cpuSpeedMHz/1000).toFixed(1)} GHz`;
+  $('#pool-hw-power').textContent = 'detected'; // electron powerMonitor wired separately
+  // Warnings
+  const warn = $('#pool-hw-warning');
+  if (probe.diskFreeGB < 50) {
+    warn.style.display = '';
+    warn.textContent = `Free disk under 50 GB — pool joining not recommended right now. Free up some space first.`;
+  } else if (probe.ramFreeGB < 3) {
+    warn.style.display = '';
+    warn.textContent = `Low free RAM (${probe.ramFreeGB} GB) — pool joining not recommended right now.`;
+  } else {
+    warn.style.display = 'none';
+  }
+  // Three-tier display
+  const rec = probe.recommendedGB;
+  $('#pool-rec-min').textContent = rec === 0 ? '—' : '10 GB';
+  $('#pool-rec-mid').textContent = rec === 0 ? 'not recommended' : `${rec} GB`;
+  // Stretch = next rung up
+  const rungs = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000];
+  const stretch = rungs.find(r => r > rec) || rec * 2;
+  $('#pool-rec-max').textContent = rec === 0 ? '—' : `${stretch} GB`;
+  // Slider — start at current contribution if set, else recommendation
+  const current = probe.currentContributionGB || 0;
+  const sliderMax = Math.max(2000, stretch * 2);
+  $('#pool-slider').max = sliderMax;
+  $('#pool-slider').value = current > 0 ? current : rec;
+  $('#pool-slider-value').textContent = `${$('#pool-slider').value} GB`;
+  updatePoolImpact($('#pool-slider').value, probe);
+  // Save-button label depends on state
+  $('#btn-pool-save').textContent = current > 0 ? 'Update contribution' : 'Join the pool';
+  $('#pool-save-status').textContent = current > 0
+    ? `Currently contributing ${current} GB`
+    : '';
+}
+
+// Live impact text — updates as the user moves the slider.
+function updatePoolImpact(gbStr, probe) {
+  const gb = Number(gbStr) || 0;
+  const impact = $('#pool-impact');
+  if (gb === 0) {
+    impact.innerHTML = '0 GB = not in the pool. Your node still validates the chain normally.';
+    return;
+  }
+  // Compute impact numbers
+  const diskPct = ((gb / probe.diskFreeGB) * 100).toFixed(1);
+  const ramOverheadGB = (gb * 3 / 1024).toFixed(2);
+  const monthlyUploadGB = Math.round(gb * 60 / 1024 * 100) / 100;
+  // Warning flags
+  const diskWarn = (gb > probe.diskFreeGB * 0.7);
+  const ramWarn = (Number(ramOverheadGB) > probe.ramFreeGB * 0.5);
+  let html = `<strong>${gb} GB</strong> ≈ ${diskPct}% of your free disk, `;
+  html += `+${ramOverheadGB} GB RAM overhead, `;
+  html += `~${monthlyUploadGB} GB/month upload. `;
+  html += 'App restart required to apply.';
+  if (diskWarn || ramWarn) {
+    html += '<br><span style="color:var(--kaspa-amber,#f5a623);">';
+    if (diskWarn) html += ` ⚠ Using >70% of free disk.`;
+    if (ramWarn)  html += ` ⚠ Using >50% of free RAM.`;
+    html += '</span>';
+  }
+  impact.innerHTML = html;
+}
+
+// Cache the latest probe so slider input handler can use it without re-IPC.
+let _poolProbeCache = null;
+async function refreshPoolProbeCache() {
+  _poolProbeCache = await window.mykai.pool.hardwareProbe().catch(() => null);
+}
+
+$('#pool-slider').addEventListener('input', (e) => {
+  $('#pool-slider-value').textContent = `${e.target.value} GB`;
+  if (_poolProbeCache) updatePoolImpact(e.target.value, _poolProbeCache);
+});
+
+$('#btn-pool-save').addEventListener('click', async () => {
+  const gb = parseInt($('#pool-slider').value, 10) || 0;
+  $('#pool-save-status').textContent = 'Saving…';
+  await window.mykai.config.set({ shardSizeGB: gb });
+  $('#pool-save-status').textContent = `Saved. Restart MyKAI to apply (now ${gb} GB).`;
+  $('#btn-pool-save').textContent = 'Saved — restart to apply';
+});
+
 function showPanel(panel) {
   activePanel = panel;
   $('#activity-feed').classList.toggle('hidden', panel !== 'activity');
   $('#mining-panel').classList.toggle('hidden', panel !== 'mining');
   $('#settings-panel').classList.toggle('hidden', panel !== 'settings');
+  // v0.5: archive pool panel
+  $('#pool-panel').classList.toggle('hidden', panel !== 'pool');
+  if (panel === 'pool') {
+    refreshPoolProbeCache().then(() => openPoolPanel());
+  }
   $('#btn-settings').classList.toggle('active', panel === 'settings');
 
   if (panel === 'mining') loadMiningLogs();
@@ -863,6 +973,8 @@ function showPanel(panel) {
 
 // Settings link toggles settings panel; clicking again returns to activity
 $('#btn-settings').addEventListener('click', (e) => { e.preventDefault(); showPanel(activePanel === 'settings' ? 'activity' : 'settings'); });
+$('#btn-pool').addEventListener('click', (e) => { e.preventDefault(); showPanel(activePanel === 'pool' ? 'activity' : 'pool'); });
+$('#btn-close-pool').addEventListener('click', (e) => { e.preventDefault(); showPanel('activity'); });
 // Close button in settings header returns to activity
 $('#btn-close-settings').addEventListener('click', (e) => { e.preventDefault(); showPanel('activity'); });
 
@@ -1399,8 +1511,9 @@ $('#btn-save-settings').addEventListener('click', async () => {
     // v0.4: storage mode + retention days
     nodeStorageMode: $('#setting-storage-mode').value,
     retentionDays: retentionDays,
-    // v0.5: archival contribution amount in GB (0 = feature off)
-    shardSizeGB: Math.max(0, parseInt($('#setting-shard-size-gb').value, 10) || 0),
+    // v0.5: shardSizeGB moved to the dedicated Archive Pool page — saved
+    // via its own Save button. Do NOT include here, otherwise saving
+    // Settings would zero-out the pool contribution.
     kasmap: {
       enabled: $('#setting-kasmap-enabled').checked,
       token: $('#setting-kasmap-token').value.trim(),
