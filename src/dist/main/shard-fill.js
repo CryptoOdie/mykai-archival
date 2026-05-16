@@ -124,13 +124,32 @@ class ShardFill extends events_1.EventEmitter {
     }
 
     /** Internal: record a strike against an endpoint. Returns true if
-     *  this strike triggered a ban. */
-    _recordStrike(endpoint, reason) {
+     *  this strike triggered a ban.
+     *
+     *  Severity-tiered (v0.5.4):
+     *    - 'hard'  Cryptographic violation (hash mismatch, all-blocks-rejected,
+     *              malformed header bytes). There is no honest explanation —
+     *              the peer is either tampering or catastrophically broken.
+     *              1 strike = 24h ban, immediate. We don't give second chances
+     *              for cryptographic dishonesty.
+     *    - 'soft'  Network error, timeout, disconnect. Usually honest flake;
+     *              3 strikes within 1h = 30-min ban.
+     */
+    _recordStrike(endpoint, reason, severity = 'soft') {
         if (!endpoint) return false;
         const now = Date.now();
+
+        if (severity === 'hard') {
+            const HARD_BAN_MS = 24 * 60 * 60_000; // 24h
+            this._banned.set(endpoint, now + HARD_BAN_MS);
+            this._strikes.delete(endpoint);
+            this.emit('log', `Security: HARD BAN ${endpoint} for 24h — cryptographic violation: ${reason}`);
+            return true;
+        }
+
         const STRIKE_DECAY_MS = 60 * 60_000;     // 1h
-        const BAN_DURATION_MS = 30 * 60_000;     // 30 min
-        const BAN_THRESHOLD = 3;
+        const SOFT_BAN_MS = 30 * 60_000;         // 30 min
+        const SOFT_THRESHOLD = 3;
         let entry = this._strikes.get(endpoint);
         if (!entry || (now - entry.lastStrike) > STRIKE_DECAY_MS) {
             entry = { count: 0, lastStrike: now };
@@ -138,10 +157,10 @@ class ShardFill extends events_1.EventEmitter {
         entry.count++;
         entry.lastStrike = now;
         this._strikes.set(endpoint, entry);
-        if (entry.count >= BAN_THRESHOLD) {
-            this._banned.set(endpoint, now + BAN_DURATION_MS);
+        if (entry.count >= SOFT_THRESHOLD) {
+            this._banned.set(endpoint, now + SOFT_BAN_MS);
             this._strikes.delete(endpoint);
-            this.emit('log', `Security: banned ${endpoint} for 30 min after ${BAN_THRESHOLD} strikes (last reason: ${reason})`);
+            this.emit('log', `Security: banned ${endpoint} for 30 min after ${SOFT_THRESHOLD} soft strikes (last reason: ${reason})`);
             return true;
         }
         return false;
@@ -425,7 +444,9 @@ class ShardFill extends events_1.EventEmitter {
         // ─── Source 2: MyKAI peers ─────────────────────────────────
         // Walk member list for peers that advertise an endpoint. Try
         // them in HRW-rank order so we hit canonical holders first.
-        // Skip banned endpoints (3-strike rule, see _recordStrike).
+        // Skip banned endpoints. Hard ban (24h, 1 strike) for cryptographic
+        // violations; soft ban (30 min, 3 strikes) for network errors. See
+        // _recordStrike for severity rules.
         const peerEndpoints = this._peerEndpointsForBucket(bucketId);
         for (const endpoint of peerEndpoints) {
             if (this._isBanned(endpoint)) continue;
@@ -447,7 +468,7 @@ class ShardFill extends events_1.EventEmitter {
                     // claiming to be Kaspa blocks that our kaspad
                     // doesn't recognize. Strike them.
                     if (blocks.length > 0 && ingested === 0) {
-                        this._recordStrike(endpoint, 'returned-blocks-all-rejected');
+                        this._recordStrike(endpoint, 'returned-blocks-all-rejected', 'hard');
                     }
                 }
             } catch (err) {

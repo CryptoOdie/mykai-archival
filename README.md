@@ -51,7 +51,7 @@ Verification on ingest is necessary but not sufficient. Disks corrupt. Participa
 | **Reputation-weighted sampling** | Sources that have failed audits before get challenged disproportionately often. Trusted sources get sampled less. Audit budget goes where suspicion is highest. |
 | **Cross-peer corroboration** | A slice of audits (~20%) ask multiple sources for the same block and compare. Catches a source that's *internally consistent but lying* — they'd have to corrupt the same block across many peers, which content-addressing makes impossible. |
 | **Range completeness audits** | ~5% of audits verify a participant claims contiguous coverage of a DAA range and can actually serve every block in it — no fake "I have 40 GB" gaps. |
-| **Smart-ban** | 3 verification failures from the same source within 1 hour = 30-minute ban. Repeat offenders effectively get blacklisted. |
+| **Smart-ban (tiered)** | **Hard strike** — any cryptographic violation (hash mismatch, all-blocks-rejected, malformed header bytes): **1 strike = 24-hour ban, immediate**. There's no honest explanation for the bytes to not hash to what they claim, so we don't extend second chances. **Soft strike** — network errors / timeouts / disconnects: 3 strikes within 1h = 30-min ban (these are usually honest flakes). |
 | **Churn-storm spike** | If many peers drop simultaneously, audit rate spikes to catch a coordinated bad-actor exit. |
 
 ### 3. Replication and assignment — no single point of failure
