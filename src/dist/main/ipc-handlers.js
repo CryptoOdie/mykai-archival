@@ -187,6 +187,95 @@ function registerIpcHandlers(manager, monitor, config, gamification, kasmap, upd
         if (!opts?.getShardStats) return null;
         return opts.getShardStats();
     });
+    // v0.5.1: explorer serving is bundled with pool participation
+    // (shardSizeGB > 0). No standalone toggle, no Pause IPC — the only
+    // dial is the shard size slider on the Pool page.
+    // v0.5.1.5: coverage bar. The renderer asks for "my slice + the
+    // network's slices" via two IPCs:
+    //
+    //   coverage:my-slice  →  this node's own DAA range + kaspad chain tip.
+    //                         Cheap; refreshed on every renderer poll.
+    //
+    //   coverage:network   →  aggregated participants from the foundation
+    //                         discovery service. Returns the local-only view
+    //                         (just my-slice in a participants array) when
+    //                         the network endpoint is unreachable or unset.
+    //
+    // The publish path (POST my-slice to the foundation aggregator every
+    // 15 min) is wired in main.js's startup so it runs whether or not the
+    // Pool panel is open. Renderer just reads.
+    track('coverage:my-slice', () => {
+        if (!opts?.getCoverageMySlice) return null;
+        return opts.getCoverageMySlice();
+    });
+    track('coverage:network', async () => {
+        if (!opts?.getCoverageNetwork) return null;
+        return await opts.getCoverageNetwork();
+    });
+    // v0.5.3: swarm membership view + my computed assignments.
+    //   swarm:members      → cached member list from foundation Worker
+    //   swarm:assignments  → MY assigned bucket ids, computed locally
+    // Both are cheap, cached, and safe to poll on the Pool panel.
+    track('swarm:members', () => {
+        if (!opts?.getSwarmMembers) return null;
+        return opts.getSwarmMembers();
+    });
+    track('swarm:assignments', () => {
+        if (!opts?.getMyAssignments) return null;
+        return opts.getMyAssignments();
+    });
+    // v0.5.5 hardening: recent security events for the dashboard widget.
+    track('security:recent-events', () => {
+        if (!opts?.getSecurityEvents) return [];
+        return opts.getSecurityEvents();
+    });
+    // v0.5.4: test a list of kaspad wRPC URLs. For each, attempt a
+    // WebSocket handshake + a single getBlockDagInfo RPC to confirm the
+    // source is reachable AND running kaspad. Returns per-URL results
+    // so the user can fix bad URLs before saving.
+    track('seeds:test', async (_event, urls) => {
+        const { KaspadWRPCClient } = require('./kaspad-wrpc-client');
+        const results = [];
+        for (const url of (urls || [])) {
+            const u = String(url || '').trim();
+            if (!u || !/^wss?:\/\//.test(u)) {
+                results.push({ url: u, ok: false, error: 'invalid URL (must start with ws:// or wss://)' });
+                continue;
+            }
+            const client = new KaspadWRPCClient(u);
+            try {
+                const resp = await client.rpcCall('getBlockDagInfo', {}, 8000);
+                const params = resp?.params || {};
+                results.push({
+                    url: u,
+                    ok: true,
+                    network: params.network || params.networkName || 'unknown',
+                    pruningPointHash: params.pruningPointHash || '',
+                    blockCount: params.blockCount || params.block_count || 0,
+                });
+            } catch (err) {
+                results.push({ url: u, ok: false, error: err?.message || String(err) });
+            } finally {
+                try { client.close(); } catch { /* ignore */ }
+            }
+        }
+        return results;
+    });
+    // v0.5.1: generic "restart the app" — used by config buttons whose
+    // change only takes effect on next launch (shardSizeGB, network,
+    // node mode, etc.). The renderer flips its UI to "Restarting…",
+    // calls this, and the app immediately relaunches itself. No manual
+    // quit-and-reopen, no instructional copy.
+    // Brief setTimeout so the IPC response makes it back to the renderer
+    // before exit — without it the renderer briefly shows an unresolved
+    // promise error on the way down.
+    track('app:restart', () => {
+        setTimeout(() => {
+            electron_1.app.relaunch();
+            electron_1.app.exit(0);
+        }, 150);
+        return { ok: true };
+    });
     // v0.5: hardware probe for the Archive Pool page. Bundles disk + RAM +
     // CPU info plus a recommended contribution based on the user's machine.
     // Recommendation algorithm:

@@ -55,6 +55,24 @@ const DEFAULTS = {
     // Recommended starting points: 50 GB for laptops, 200 GB for desktops,
     // 1000 GB for power users / dedicated archive operators.
     shardSizeGB: 0,
+    // v0.5.1: explorer-backend serving is bundled with pool participation
+    // (shardSizeGB > 0). No standalone enabled / Pause toggles — pool
+    // participation is the only dial. Public-internet binding unlocks in
+    // v0.5.2 with the inbound-reachability gate. See
+    // docs/explorer-backend-plan.md.
+    // v0.5.3: seed source list. Foundation-run + community archival
+    // MyKAI instances. The fill loop tries these as the LAST source
+    // (after local kaspad + peer pulls). Empty list = no seed fallback
+    // (development-only). The default array lives in shard-pull.js so
+    // power users can override here in their electron-store JSON.
+    seedSources: undefined,  // null/undefined → use shardPull.DEFAULT_SEED_SOURCES
+    // v0.5.3 Day 3: raw-wRPC archival kaspad seed list. Used by the
+    // fill loop's source chain as fallback when local kaspad has
+    // pruned the range AND no MyKAI peer holds it. Each entry is a
+    // wRPC WebSocket URL (wss://host:port or ws://host:port for plain).
+    // Empty by default; user fills this with reachable archival nodes:
+    //   "kaspadSeedSources": ["wss://your-archival-kaspad:18110"]
+    kaspadSeedSources: undefined,  // null/undefined → empty list
 };
 class ConfigStore {
     store;
@@ -106,6 +124,11 @@ class ConfigStore {
         }
         if (this.store.get('retentionDays') === undefined) {
             this.store.set('retentionDays', 0);
+        }
+        // v0.5.1: clean up any stale explorer config object from earlier
+        // dev builds. Pool participation is the only dial now.
+        if (this.store.get('explorer') !== undefined) {
+            this.store.delete('explorer');
         }
         // Identity restore — runs BEFORE the fresh-key generation below.
         // If electron-store has nothing but Documents\MyKAI\identity.json
@@ -264,6 +287,9 @@ class ConfigStore {
             retentionDays: this.store.get('retentionDays') || 0,
             // v0.5: shard-storage budget in GB. 0 = disabled.
             shardSizeGB: this.store.get('shardSizeGB') || 0,
+            // v0.5.4: archival kaspad wRPC seed sources — array of URLs
+            // the fill loop tries when local kaspad has pruned a range.
+            kaspadSeedSources: this.store.get('kaspadSeedSources') || [],
         };
     }
     setAll(config) {

@@ -68,6 +68,41 @@ electron_1.contextBridge.exposeInMainWorld('mykai', {
     shard: {
         stats: () => electron_1.ipcRenderer.invoke('shard:stats'),
     },
+    // v0.5.1: no standalone window.mykai.explorer bridge. Explorer
+    // serving is implicit on pool participation (shardSizeGB > 0).
+    /** v0.5.1.5: coverage bar. Two reads — your local slice (fast,
+     *  synthesized from shardStorage + local kaspad) and the network
+     *  aggregate (fetched from the foundation discovery service with
+     *  last-good caching, falls back to a "just-you" payload if the
+     *  endpoint isn't reachable). The renderer polls these on the Pool
+     *  panel; the main process owns the 15-min POST publish path. */
+    coverage: {
+        mySlice: () => electron_1.ipcRenderer.invoke('coverage:my-slice'),
+        network: () => electron_1.ipcRenderer.invoke('coverage:network'),
+    },
+    /** v0.5.3: swarm membership + my locally-computed assignments. The
+     *  member list comes from the foundation Worker; assignments are
+     *  pure-function over (myNodeId, myBudget, member list, tip). The
+     *  Day-2 fill loop will use the same provider on the main side to
+     *  drive the actual pull-from-peer work. */
+    swarm: {
+        members: () => electron_1.ipcRenderer.invoke('swarm:members'),
+        assignments: () => electron_1.ipcRenderer.invoke('swarm:assignments'),
+    },
+    /** v0.5.5: recent security events from the fill + audit loops.
+     *  Powers the "Security" panel on the dashboard. Returns up to
+     *  100 events: pull-verified, rejected, stripped-verbose,
+     *  monotonicity violation, peer-banned, etc. */
+    security: {
+        recentEvents: () => electron_1.ipcRenderer.invoke('security:recent-events'),
+    },
+    /** v0.5.4: ping a list of kaspad wRPC URLs to confirm each is reachable
+     *  + running kaspad. Returns per-URL results: {url, ok, network?,
+     *  blockCount?, error?}. Used by the Settings "Test connection" button
+     *  so users verify a friend's archival URL before saving. */
+    seeds: {
+        test: (urls) => electron_1.ipcRenderer.invoke('seeds:test', urls),
+    },
     recovery: {
         /** Look up nodes by accountKey or nodeId. Returns
          *  { ok: true, matches: [...] } or { ok: false, code, error }.
@@ -149,6 +184,11 @@ electron_1.contextBridge.exposeInMainWorld('mykai', {
     },
     app: {
         version: () => electron_1.ipcRenderer.invoke('app:version'),
+        /** v0.5.1: gracefully relaunch the app. Used by Save buttons whose
+         *  change requires a fresh boot (shardSizeGB, network, node mode).
+         *  The renderer should show a brief "Restarting…" state before
+         *  calling — the IPC resolves, then the app exits ~150 ms later. */
+        restart: () => electron_1.ipcRenderer.invoke('app:restart'),
     },
     window: {
         minimize: () => electron_1.ipcRenderer.send('window:minimize'),

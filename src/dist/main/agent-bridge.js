@@ -33,11 +33,77 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentBridge = void 0;
 const http_1 = __importDefault(require("http"));
 const fs_1 = __importDefault(require("fs"));
+const zlib_1 = __importDefault(require("zlib"));
 const events_1 = require("events");
 const http_body_1 = require("./util/http-body");
 const DEFAULT_PORT = 17111;
 const MAX_LINES_PARAM = 500;
 const MAX_LOG_RESPONSE_BYTES = 1 * 1024 * 1024;
+// v0.5.1: rate-limiter for heavyweight explorer endpoints. The biggest
+// risk on residential laptops isn't bandwidth — it's that a 500-block
+// JSON.stringify monopolizes the Electron main event loop for 100-200 ms
+// and the renderer drops frames. Capping in-flight large requests is
+// the single largest renderer-jank mitigation we ship.
+const EXPLORER_GLOBAL_MAX_INFLIGHT = 4;
+const EXPLORER_PER_SOCKET_MAX_INFLIGHT = 2;
+// Yield to the event loop every N blocks while streaming the response.
+// Each setImmediate gives HTTP I/O, kaspad notifications, and renderer
+// IPC a chance to drain. 25 blocks is the sweet spot from the Phase-C
+// research: small enough to keep frame budgets, large enough that the
+// yield overhead doesn't dominate.
+const EXPLORER_YIELD_EVERY_N = 25;
+// In-flight counters for the rate limiter. Module-scope so they survive
+// across `start()` / `stop()` cycles in dev (they reset on full restart).
+const _explorerInflight = {
+    global: 0,
+    perSocket: new WeakMap(),
+};
+function _explorerTryAcquire(socket) {
+    const cur = _explorerInflight.perSocket.get(socket) || 0;
+    if (_explorerInflight.global >= EXPLORER_GLOBAL_MAX_INFLIGHT) return false;
+    if (cur >= EXPLORER_PER_SOCKET_MAX_INFLIGHT) return false;
+    _explorerInflight.global++;
+    _explorerInflight.perSocket.set(socket, cur + 1);
+    return true;
+}
+function _explorerRelease(socket) {
+    if (_explorerInflight.global > 0) _explorerInflight.global--;
+    const cur = _explorerInflight.perSocket.get(socket) || 0;
+    if (cur <= 1) _explorerInflight.perSocket.delete(socket);
+    else _explorerInflight.perSocket.set(socket, cur - 1);
+}
+// Encoding negotiation. zstd is the right pick on JSON of mixed-entropy
+// content (kaspa blocks have hash/sig fields with high entropy and lots
+// of repetitive structural keys — gzip ratio ~1.3-1.6, zstd ~4-5×).
+// Node 23.8+ ships createZstdCompress; older bundles fall back to gzip.
+// gzip is the universal fallback because every HTTP client supports it.
+// identity (no compression) is honored only if the client refuses both,
+// to avoid silently breaking pre-compression clients.
+function _pickEncoding(acceptHeader) {
+    if (!acceptHeader || typeof acceptHeader !== 'string') return 'identity';
+    const lower = acceptHeader.toLowerCase();
+    if (typeof zlib_1.default.createZstdCompress === 'function' && lower.includes('zstd')) return 'zstd';
+    if (lower.includes('gzip')) return 'gzip';
+    if (lower.includes('identity') || lower.includes('*')) return 'identity';
+    return 'identity';
+}
+function _makeEncoder(encoding) {
+    if (encoding === 'zstd' && typeof zlib_1.default.createZstdCompress === 'function') {
+        return zlib_1.default.createZstdCompress();
+    }
+    if (encoding === 'gzip') {
+        // level 1 — speed over ratio. The dominant cost on residential
+        // hardware is CPU per response, not bytes-on-wire; we already
+        // prefer zstd when available.
+        return zlib_1.default.createGzip({ level: 1 });
+    }
+    return null;
+}
+// setImmediate-as-Promise: tiny helper so streaming loops can `await
+// _yieldImm()` to give the event loop a tick.
+function _yieldImm() {
+    return new Promise((r) => setImmediate(r));
+}
 class AgentBridge extends events_1.EventEmitter {
     server = null;
     _agentConnected = false;
@@ -196,6 +262,125 @@ class AgentBridge extends events_1.EventEmitter {
                         return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
                     }
                 }
+                // ─── v0.5.1: explorer-backend endpoints ─────────────────────
+                // Four new /shard/* routes that let simply-kaspa-indexer (and
+                // any compatible explorer ingester) treat this MyKAI install
+                // as a block-data source. Each provider returns null when the
+                // user has explorer-mode OFF or paused — we surface that as a
+                // 503 so the indexer rotates to a different pinned pool peer
+                // instead of getting a confusing 404 / empty response.
+                //
+                // JSON responses on 200 are byte-identical to kaspad wRPC
+                // shape (the indexer reuses rusty-kaspa's serde — see
+                // docs/explorer-backend-plan.md). Error responses keep the
+                // existing { ok: false, error } shape because they're for
+                // human eyes (curl / logs).
+                if (pathname === '/shard/dag-info') {
+                    if (!this.providers.getShardDagInfo) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode not enabled' }));
+                    }
+                    try {
+                        const info = await this.providers.getShardDagInfo();
+                        if (!info) {
+                            return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode disabled or paused' }));
+                        }
+                        return this._respond(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(info));
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                }
+                if (pathname === '/shard/blocks') {
+                    if (!this.providers.getShardBlocksAfterLowHash) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode not enabled' }));
+                    }
+                    const lowHash = url.searchParams.get('low_hash');
+                    if (!lowHash || !/^[0-9a-fA-F]{64}$/.test(lowHash)) {
+                        return this._respond(res, 400, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Missing or invalid low_hash (expect 32-byte hex)' }));
+                    }
+                    const includeTxs = url.searchParams.get('include_txs') !== 'false';
+                    const limitRaw = parseInt(url.searchParams.get('limit') || '100', 10);
+                    const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? limitRaw : 100, 500));
+                    // Rate-limit BEFORE doing any work. Excess requests get a
+                    // short Retry-After so the indexer rotates to another peer.
+                    if (!_explorerTryAcquire(req.socket)) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json', 'Retry-After': '1' }, JSON.stringify({ ok: false, error: 'Too many in-flight large requests' }));
+                    }
+                    try {
+                        const result = await this.providers.getShardBlocksAfterLowHash(lowHash, includeTxs, limit);
+                        if (!result) {
+                            _explorerRelease(req.socket);
+                            return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode disabled or paused' }));
+                        }
+                        if (result.below_floor) {
+                            _explorerRelease(req.socket);
+                            return this._respond(res, 404, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'below_pool_floor', pool_floor_daa: result.pool_floor_daa }));
+                        }
+                        // Streaming write — see _streamBlocksResponse for the
+                        // setImmediate yielding + compression negotiation.
+                        await this._streamBlocksResponse(req, res, result.block_hashes, result.blocksBytes);
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                    finally {
+                        _explorerRelease(req.socket);
+                    }
+                    return;
+                }
+                if (pathname === '/shard/virtual-chain') {
+                    if (!this.providers.getShardVirtualChain) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode not enabled' }));
+                    }
+                    const startHash = url.searchParams.get('start_hash');
+                    if (!startHash || !/^[0-9a-fA-F]{64}$/.test(startHash)) {
+                        return this._respond(res, 400, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Missing or invalid start_hash (expect 32-byte hex)' }));
+                    }
+                    const tipDistRaw = parseInt(url.searchParams.get('tip_distance') || '50', 10);
+                    const tipDistance = Math.max(1, Math.min(Number.isFinite(tipDistRaw) ? tipDistRaw : 50, 500));
+                    try {
+                        const result = await this.providers.getShardVirtualChain(startHash, tipDistance);
+                        if (!result) {
+                            return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode disabled, paused, or pool participant lacks VC capability' }));
+                        }
+                        return this._respond(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(result));
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                }
+                if (pathname === '/shard/block-range') {
+                    if (!this.providers.getShardBlockRange) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode not enabled' }));
+                    }
+                    const fromDaaRaw = parseInt(url.searchParams.get('from_daa') || '', 10);
+                    const toDaaRaw = parseInt(url.searchParams.get('to_daa') || '', 10);
+                    if (!Number.isFinite(fromDaaRaw) || !Number.isFinite(toDaaRaw) || fromDaaRaw < 0 || toDaaRaw <= fromDaaRaw) {
+                        return this._respond(res, 400, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Missing or invalid from_daa / to_daa (need from_daa >= 0 and to_daa > from_daa)' }));
+                    }
+                    const toDaa = Math.min(toDaaRaw, fromDaaRaw + 5000);
+                    const includeTxs = url.searchParams.get('include_txs') !== 'false';
+                    if (!_explorerTryAcquire(req.socket)) {
+                        return this._respond(res, 503, { 'Content-Type': 'application/json', 'Retry-After': '1' }, JSON.stringify({ ok: false, error: 'Too many in-flight large requests' }));
+                    }
+                    try {
+                        const result = await this.providers.getShardBlockRange(fromDaaRaw, toDaa, includeTxs);
+                        if (!result) {
+                            _explorerRelease(req.socket);
+                            return this._respond(res, 503, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Explorer mode disabled or paused' }));
+                        }
+                        // Same streaming path — blocksBytes only (no
+                        // block_hashes wrapper for block-range responses).
+                        await this._streamBlocksResponse(req, res, null, result.blocksBytes);
+                    }
+                    catch (err) {
+                        return this._respond(res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
+                    }
+                    finally {
+                        _explorerRelease(req.socket);
+                    }
+                    return;
+                }
                 return this._respond(res, 404, { 'Content-Type': 'application/json' }, JSON.stringify({ ok: false, error: 'Not found' }));
             }
             // ─── POST routes ───────────────────────────────────────────────
@@ -289,6 +474,101 @@ class AgentBridge extends events_1.EventEmitter {
         };
         res.writeHead(status, fullHeaders);
         res.end(body);
+    }
+    /**
+     * v0.5.1: stream a `{block_hashes, blocks}` (or `{blocks}`) response
+     * for the heavy explorer endpoints. Three things are happening here
+     * that the naked JSON.stringify path couldn't do:
+     *
+     *   1. We write the response as a stream, so the giant 5-MB-ish
+     *      response body never exists as a single allocation in V8's
+     *      large-object space. Each block is a young-generation
+     *      allocation that gets scavenged before the next.
+     *
+     *   2. We `await setImmediate` every EXPLORER_YIELD_EVERY_N blocks,
+     *      giving the event loop a tick to deliver kaspad notifications,
+     *      IPC events, and renderer compositor frames. Without this the
+     *      MyKAI UI visibly stutters during multi-hundred-block reads.
+     *
+     *   3. We pipe through zstd (preferred) or gzip (fallback) based on
+     *      the client's Accept-Encoding. Raw block JSON is ~4-5× smaller
+     *      under zstd; the CPU cost is well under 5% of one core at the
+     *      sustained rates Light-tier serving sees.
+     *
+     * `blockHashes` may be null for endpoints (block-range) that don't
+     * include the hash array in the response.
+     */
+    async _streamBlocksResponse(req, res, blockHashes, blocksBytes) {
+        const encoding = _pickEncoding(req.headers['accept-encoding']);
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'no-store',
+        };
+        if (encoding !== 'identity') headers['Content-Encoding'] = encoding;
+        // Hint to caches/proxies that the response varies with the
+        // negotiated encoding. Defensive — local-only today, but the
+        // header is correct.
+        headers['Vary'] = 'Accept-Encoding';
+        res.writeHead(200, headers);
+        const encoder = _makeEncoder(encoding);
+        // sink is what we write to — encoder if compressing, else res.
+        const sink = encoder || res;
+        if (encoder) encoder.pipe(res);
+        const write = (chunk) => {
+            // Apply backpressure: if the sink says it can't accept more
+            // right now, wait for 'drain' before resuming. This is what
+            // keeps the response from materializing an unbounded buffer
+            // in memory when a slow consumer can't drink fast enough.
+            if (!sink.write(chunk)) {
+                return new Promise((resolve) => sink.once('drain', resolve));
+            }
+            return null;
+        };
+        try {
+            // Open the JSON object.
+            if (blockHashes) {
+                await write('{"block_hashes":[');
+                for (let i = 0; i < blockHashes.length; i++) {
+                    const p1 = write(i === 0 ? '"' : ',"');
+                    if (p1) await p1;
+                    const p2 = write(blockHashes[i]);
+                    if (p2) await p2;
+                    const p3 = write('"');
+                    if (p3) await p3;
+                    if ((i + 1) % EXPLORER_YIELD_EVERY_N === 0) await _yieldImm();
+                }
+                await write('],"blocks":[');
+            }
+            else {
+                await write('{"blocks":[');
+            }
+            for (let i = 0; i < blocksBytes.length; i++) {
+                if (i > 0) {
+                    const p = write(',');
+                    if (p) await p;
+                }
+                // blocksBytes[i] is the raw kaspad-shape JSON the wRPC
+                // BlockAdded notification produced. We write the bytes
+                // directly — no JSON.parse, no JSON.stringify.
+                const p = write(blocksBytes[i]);
+                if (p) await p;
+                if ((i + 1) % EXPLORER_YIELD_EVERY_N === 0) await _yieldImm();
+            }
+            await write(']}');
+            if (encoder) {
+                encoder.end();
+            }
+            else {
+                res.end();
+            }
+        }
+        catch (err) {
+            // If the client aborts mid-stream we'll land here. Don't try
+            // to write again — just close.
+            try { res.destroy(); } catch { /* swallow */ }
+            this.emit('log', `stream-blocks: ${err?.message || err}`);
+        }
     }
     /** Parse and clamp the ?lines=N / ?limit=N query parameter. Returns
      *  the default if missing, NaN, negative, or zero. Caps at MAX_LINES_PARAM

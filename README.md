@@ -2,9 +2,85 @@
 
 A fork of [MyKAI Node v0.3.8](https://github.com/KasMapApp/MyKAI-Node-Public) (MIT, with author permission) that adds an **optional archival contribution feature**: your normal Kaspa node can also help preserve Kaspa's history.
 
-**Status:** v0.5 pre-release.
+**Status:** v0.5 pre-release — running locally, ready for early testers.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full v0.4 + v0.5 release notes.
+See [`CHANGELOG.md`](CHANGELOG.md) for the full v0.4 + v0.5 release notes and [`docs/security-model.md`](docs/security-model.md) for the trust chain.
+
+---
+
+## Quick start (Windows)
+
+```powershell
+# 1. Clone
+git clone https://github.com/<your-org>/mykai-archival.git
+cd mykai-archival
+
+# 2. Fetch kaspad binary (pinned + SHA-256 verified)
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+
+# 3. Install JS deps (Node 20+ required)
+cd src
+npm install
+
+# 4. Run
+npm start
+```
+
+That's it — the app opens, kaspad starts in the background, and the Archive bar begins filling at ~1 GB/hour from live capture.
+
+## Connecting to an archival kaspad source
+
+If you have access to an archival kaspad (your own, a friend's, or a community-run one), pull deep-history blocks from it instead of waiting on live capture.
+
+1. **On the archival operator's side**, run:
+   ```
+   kaspad --archival --rpc-listen=0.0.0.0:18110
+   ```
+   Open port 18110, or expose via Tailscale / Cloudflare Tunnel for private sharing.
+
+2. **In MyKAI** → Settings → **Archive seed sources** → paste the URL (`wss://archival-host:18110`) → click **Test connection** → if green, Save.
+
+3. Within 60 seconds the fill loop pulls deep-history buckets. **Every block is hash-verified against your local kaspad's PoW chain** — no trust in the source required. See [`docs/security-model.md`](docs/security-model.md).
+
+## Reproducibility & security verification
+
+MyKAI is designed so anyone can independently verify the running build matches the published source. Run:
+
+```bash
+node scripts/verify-build.js
+```
+
+This checks:
+
+1. **Pinned binary hashes** — `kaspad.exe` SHA-256 matches what's pinned in `setup.ps1`. Mismatch = aborts with the actual hash so you can investigate.
+2. **No native compilation** — confirms zero `.node` binary modules in `node_modules/`. Native compilation is the #1 source of non-reproducible builds; we avoid it entirely. `sql.js` (WASM), `@noble/hashes` (pure JS), no `node-gyp`.
+3. **Exact dependency versions** — `package.json` uses no `^` or `~`; `package-lock.json` pins every transitive dep by SHA. The lockfile's `integrity:` fields are subresource-integrity hashes — npm verifies them on every install.
+4. **Security-critical source files present** — confirms the trust-chain files (`kaspa-block-hash.js`, `parent-chain-walker.js`, `shard-fill.js`, etc.) exist with their current hashes printed for cross-check against your git checkout.
+5. **Node runtime version** — flags if you're running outside the tested range (Node 20-22).
+
+### The verification chain
+
+```
+git clone @ SHA X
+  ↓ verify: git rev-parse HEAD == X
+scripts/setup.ps1
+  ↓ verify: kaspad.exe SHA-256 = 02d40a0f...
+npm install
+  ↓ verify: every package matches package-lock.json integrity hash
+  ↓ verify: no compiled .node binaries
+npm start  →  the running JS is byte-for-byte the source you cloned
+```
+
+Every byte the app loads can be traced back to either:
+- The git commit you checked out (JS source), OR
+- A pinned SHA-256 in source (kaspad), OR
+- A pinned integrity hash in `package-lock.json` (npm packages + Electron binary).
+
+**Caveats — what is NOT bit-for-bit reproducible:**
+- Electron is downloaded from electronjs.org during `npm install` and its hash IS in package-lock.json, but the resulting `node_modules` directory has filesystem timestamps that vary per install. The *content* is identical; the *file metadata* isn't.
+- If/when this project ever ships pre-built `.exe` installers (currently it doesn't), achieving Bitcoin-Core-grade bit-for-bit binary reproducibility would require deterministic packaging (`SOURCE_DATE_EPOCH`, electron-builder reproducible flags). Out of scope for v0.5 because we ship source.
+
+For an Electron app distributed as source, this is the highest practical level of reproducibility.
 
 ## What's new
 

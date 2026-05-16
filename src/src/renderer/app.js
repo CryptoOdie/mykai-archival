@@ -1,6 +1,48 @@
 // MyKAI Node — Renderer
 
-const $ = (sel) => document.querySelector(sel);
+console.log('[mykai-app] script loaded at', new Date().toISOString());
+window.addEventListener('error', (e) => {
+  console.error('[mykai-app] runtime error:', e.message, 'in', e.filename + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[mykai-app] unhandled rejection:', e.reason?.message || e.reason);
+});
+
+// Hoist state vars used by updateUI() so they exist before any code path
+// that touches them. Originally declared near line 2240 — TDZ-error-prone
+// because the renderer's onStatusUpdate listener fires updateUI BEFORE
+// module init reaches the original declaration.
+var lastUptimeBase = 0;
+var lastUptimeTimestamp = 0;
+var lastStreakBase = 0;
+var lastStreakTimestamp = 0;
+
+// Safe selector helper. If the element doesn't exist, return a stub
+// that swallows method calls instead of throwing — prevents one missing
+// DOM element from cascading and killing the entire script. Logs the
+// miss so we can clean up dead references later.
+const _missingElementsLogged = new Set();
+const $ = (sel) => {
+  const el = document.querySelector(sel);
+  if (el) return el;
+  if (!_missingElementsLogged.has(sel)) {
+    _missingElementsLogged.add(sel);
+    console.warn('[mykai-app] missing DOM element:', sel);
+  }
+  // Return a Proxy stub so chained calls like .addEventListener,
+  // .textContent, .classList.add all silently no-op.
+  return new Proxy({}, {
+    get: (_, prop) => {
+      if (prop === 'classList') return { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false };
+      if (prop === 'style') return new Proxy({}, { get: () => '', set: () => true });
+      if (prop === 'addEventListener' || prop === 'removeEventListener') return () => {};
+      if (prop === 'textContent' || prop === 'innerHTML' || prop === 'value') return '';
+      if (prop === 'querySelector' || prop === 'querySelectorAll') return () => null;
+      return undefined;
+    },
+    set: () => true,
+  });
+};
 
 /** Escape HTML-special characters in a string before inserting into innerHTML.
  *  Activity-feed messages and alert content can include text from kaspad logs,
@@ -299,6 +341,33 @@ async function refreshShardCard() {
       return;
     }
     card.classList.remove('hidden');
+    // v0.5.3: dual sync bars. Kaspa node = kaspad's headers/sync state
+    // (100% when fully synced). Archive node = how much of the user's
+    // committed budget is actually filled with stored blocks.
+    try {
+      const nodeState = await window.mykai.node?.status?.();
+      const kPct = (nodeState && typeof nodeState.syncProgress === 'number')
+        ? Math.max(0, Math.min(100, nodeState.syncProgress))
+        : 100;
+      const kFill = document.getElementById('kaspa-node-fill');
+      const kLabel = document.getElementById('kaspa-node-pct');
+      if (kFill) kFill.style.width = `${kPct}%`;
+      if (kLabel) kLabel.textContent = kPct >= 100 ? '100% ✓' : `${kPct.toFixed(1)}%`;
+    } catch { /* node IPC unavailable — leave bar untouched */ }
+    const budgetBytes = stats.budgetBytes || 0;
+    const usedBytes = stats.totalBytes || 0;
+    const aPct = budgetBytes > 0 ? (usedBytes / budgetBytes) * 100 : 0;
+    const aFill = document.getElementById('archive-node-fill');
+    const aLabel = document.getElementById('archive-node-pct');
+    if (aFill) aFill.style.width = `${Math.max(0, Math.min(100, aPct)).toFixed(3)}%`;
+    if (aLabel) {
+      // Format: under 0.1% show 3 decimals so the user sees micro-growth.
+      // Over 1% show 1 decimal. Over 99.9% show ✓.
+      if (aPct >= 99.95) aLabel.textContent = '100% ✓';
+      else if (aPct >= 1) aLabel.textContent = `${aPct.toFixed(1)}%`;
+      else if (aPct >= 0.1) aLabel.textContent = `${aPct.toFixed(2)}%`;
+      else aLabel.textContent = `${aPct.toFixed(3)}%`;
+    }
     document.getElementById('shard-stat-blocks').textContent =
       (stats.blockCount || 0).toLocaleString();
     document.getElementById('shard-stat-used').textContent =
@@ -335,9 +404,51 @@ async function refreshShardCard() {
     // Silent — feature might not be wired yet on older main process versions.
   }
 }
-// Immediate poll on load, then every 10s.
+// Immediate poll on load, then every 5s. Fast enough that the user sees
+// disk-used and capture rate move; slow enough that polling overhead is
+// negligible. At 10 BPS × 50 KB ≈ 500 KB/sec live capture, every 5s tick
+// adds ~2.5 MB which is visible on the bar at 40 GB budget granularity.
 refreshShardCard();
-setInterval(refreshShardCard, 10_000);
+setInterval(refreshShardCard, 5_000);
+
+// v0.5.5: Security panel — surfaces fill-loop + audit-loop events
+// (pulls verified, blocks rejected, peers banned, etc.) so the user
+// can see the trustless-verification work happening in real time.
+async function refreshSecurityCard() {
+  try {
+    const events = await window.mykai.security?.recentEvents?.();
+    const card = document.getElementById('security-card');
+    if (!card) return;
+    if (!Array.isArray(events) || events.length === 0) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    // Summary stats: count pulls + rejects in the buffer
+    const counts = { 'pull-verified': 0, 'rejected': 0, 'stripped-verbose': 0, 'monotonicity': 0, banned: 0 };
+    for (const e of events) {
+      if (e.type in counts) counts[e.type] += (e.count || 1);
+    }
+    const summary = document.getElementById('security-card-summary');
+    summary.textContent = `${counts['pull-verified']} verified · ${counts['rejected']} rejected · ${counts['stripped-verbose']} cleaned`;
+    // Render last 10 events
+    const list = document.getElementById('security-events-list');
+    const lines = events.slice(0, 10).map((e) => {
+      const ago = Math.floor((Date.now() - e.ts) / 1000);
+      const t = ago < 60 ? `${ago}s ago` : `${Math.floor(ago / 60)}m ago`;
+      if (e.type === 'pull-verified') return `<span style="color:var(--kaspa-teal,#49eacb);">✓</span> pulled ${e.count} blocks from ${e.source} (${t})`;
+      if (e.type === 'rejected') return `<span style="color:var(--kaspa-amber,#f5a623);">⚠</span> rejected ${e.count} unverified blocks (${t})`;
+      if (e.type === 'stripped-verbose') return `<span style="color:var(--text-secondary);">⊘</span> stripped verboseData from ${e.count} blocks (${t})`;
+      if (e.type === 'monotonicity') return `<span style="color:var(--kaspa-amber,#f5a623);">↯</span> ${e.count} DAA-order anomalies in response (${t})`;
+      return `${e.type} (${t})`;
+    });
+    list.innerHTML = lines.join('<br>');
+  } catch (err) {
+    // Silent — feature may not be wired in older main process.
+  }
+}
+refreshSecurityCard();
+setInterval(refreshSecurityCard, 5_000);
 
 // v0.4: storage-mode change handler. Main process fires this from
 // ipc-handlers.js after config:set persists. Renderer shows the right
@@ -654,27 +765,41 @@ function updateKasMapIndicator(kmStatus, kmConfig) {
 
 // --- Node Stats (reward dashboard) ---
 async function updateHealthStats() {
-  const stats = await window.mykai.gamification.stats();
-  if (!stats) return;
+  let stats;
+  try {
+    stats = await window.mykai.gamification.stats();
+  } catch (err) {
+    console.warn('[health-stats] IPC failed:', err?.message || err);
+    return;
+  }
+  if (!stats) {
+    console.warn('[health-stats] gamification.stats() returned null');
+    return;
+  }
 
   // Current Run — store base for smooth ticking
   const streak = stats.currentStreakSeconds || 0;
   lastStreakBase = streak;
   lastStreakTimestamp = Date.now();
-  $('#health-streak').textContent = fmtUptime(streak);
+  const streakEl = document.getElementById('health-streak');
+  if (streakEl) streakEl.textContent = fmtUptime(streak);
 
   // Best Run
   const best = stats.longestStreakSeconds || 0;
-  $('#health-best-streak').textContent = fmtUptime(best);
-  if (streak > 0 && streak >= best) {
-    $('#health-best-streak').style.color = 'var(--gold)';
-  } else {
-    $('#health-best-streak').style.color = '';
+  const bestEl = document.getElementById('health-best-streak');
+  if (bestEl) {
+    bestEl.textContent = fmtUptime(best);
+    if (streak > 0 && streak >= best) {
+      bestEl.style.color = 'var(--gold)';
+    } else {
+      bestEl.style.color = '';
+    }
   }
 
   // Total Uptime (cumulative all-time)
   const total = stats.totalUptimeSeconds || 0;
-  $('#health-total-uptime').textContent = fmtUptime(total);
+  const totalEl = document.getElementById('health-total-uptime');
+  if (totalEl) totalEl.textContent = fmtUptime(total);
 }
 
 // --- Sync Bars ---
@@ -899,6 +1024,9 @@ async function openPoolPanel() {
   $('#pool-save-status').textContent = current > 0
     ? `Currently contributing ${current} GB`
     : '';
+  // v0.5.1.5: start the coverage-bar refresh loop. Only meaningful when
+  // the user is already in the pool; safe no-op when they aren't.
+  startCoverageRefresh();
 }
 
 // Live impact text — updates as the user moves the slider.
@@ -942,11 +1070,228 @@ $('#pool-slider').addEventListener('input', (e) => {
 
 $('#btn-pool-save').addEventListener('click', async () => {
   const gb = parseInt($('#pool-slider').value, 10) || 0;
+  $('#btn-pool-save').disabled = true;
   $('#pool-save-status').textContent = 'Saving…';
   await window.mykai.config.set({ shardSizeGB: gb });
-  $('#pool-save-status').textContent = `Saved. Restart MyKAI to apply (now ${gb} GB).`;
-  $('#btn-pool-save').textContent = 'Saved — restart to apply';
+  // shardSizeGB only takes effect at app boot (ShardStorage is created in
+  // main.js startup), so relaunch the app ourselves. No "now go quit and
+  // restart" instructional copy — the user shouldn't have to do that.
+  $('#pool-save-status').textContent = 'Saved. Restarting MyKAI…';
+  $('#btn-pool-save').textContent = 'Restarting…';
+  await window.mykai.app.restart();
 });
+
+// v0.5.1: explorer serving is bundled with pool participation. No toggle,
+// no Pause button — being in the pool means the /shard/* endpoints answer
+// (shardSizeGB > 0). Want out? Leave the pool by setting shardSizeGB to 0.
+
+// ─── v0.5.1.5: Network coverage bar ──────────────────────────────
+// Multi-stripe SVG. Each participant gets a deterministic color from
+// their nodeId hash. The user's own stripe is highlighted with a white
+// border + "← YOU" label. Refreshes every 60s while the Pool panel is
+// open. Falls back to local-only "just you" when the foundation
+// aggregator isn't reachable.
+
+let _coverageRefreshTimer = null;
+let _coverageMyNodeId = null;
+
+function _nodeColor(nodeId) {
+  // FNV-1a-ish hash → hue 0-360. Stable across sessions: your nodeId
+  // always maps to the same color, so users mentally associate "I'm
+  // the teal one." 70% saturation + 55% lightness so colors stay vivid
+  // but distinguishable from MyKAI's mostly-monochrome chrome.
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < nodeId.length; i++) {
+    h ^= nodeId.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  const hue = h % 360;
+  return `hsl(${hue}, 70%, 55%)`;
+}
+
+function _fmtHoursAgo(daaDelta) {
+  // 10 BPS on Kaspa post-Crescendo, so 1 DAA = ~0.1 sec.
+  const secs = daaDelta / 10;
+  if (secs < 60) return 'now';
+  const mins = secs / 60;
+  if (mins < 60) return `${Math.round(mins)} min ago`;
+  const hrs = mins / 60;
+  if (hrs < 48) return `${Math.round(hrs)}h ago`;
+  const days = hrs / 24;
+  return `${days.toFixed(1)}d ago`;
+}
+
+function renderCoverageBar(payload) {
+  const svg = $('#coverage-svg');
+  const card = $('#pool-coverage-card');
+  // Always reveal the card once the Pool panel knows about it; the
+  // empty/loading states render INSIDE the card rather than hiding it.
+  // A silently-missing card is the worst UX — it teaches users "the
+  // feature didn't work" when really we just don't have data yet.
+  card.classList.remove('hidden');
+
+  // Helper to render a one-line message into the SVG instead of stripes.
+  const showMessage = (msg) => {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    svg.setAttribute('viewBox', '0 0 1000 60');
+    svg.setAttribute('height', '60');
+    const ns = 'http://www.w3.org/2000/svg';
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', '500');
+    t.setAttribute('y', '34');
+    t.setAttribute('fill', 'var(--text-secondary, #888)');
+    t.setAttribute('font-size', '14');
+    t.setAttribute('font-family', 'system-ui, sans-serif');
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = msg;
+    svg.appendChild(t);
+    $('#coverage-axis-left').textContent = '';
+    $('#coverage-axis-mid').textContent = '';
+    $('#coverage-axis-right').textContent = '';
+    $('#coverage-summary').textContent = '';
+  };
+
+  if (!payload || !payload.participants || payload.participants.length === 0) {
+    $('#coverage-source-hint').textContent = 'no participants yet';
+    showMessage('Waiting for the network to come online…');
+    return;
+  }
+
+  const participants = payload.participants.filter(
+    (p) => p.oldest_daa != null && p.newest_daa != null && p.oldest_daa < p.newest_daa
+  );
+  if (participants.length === 0) {
+    $('#coverage-source-hint').textContent = 'no usable participants';
+    showMessage('No participants with valid coverage ranges yet.');
+    return;
+  }
+  // Chain tip preference: kaspad's reported tip if we have it, else the
+  // newest DAA any participant claims. The bar still draws correctly
+  // either way — only the "right edge represents now" framing changes.
+  const tip = payload.kaspad_chain_tip_daa
+    || Math.max(...participants.map((p) => p.newest_daa));
+  // X-axis range: from oldest stored anywhere → chain tip.
+  const minDaa = Math.min(...participants.map((p) => p.oldest_daa));
+  const range = tip - minDaa;
+  if (range <= 0) return;
+
+  // Sort by oldest_daa ascending; user pinned to first row.
+  const sorted = participants.slice().sort((a, b) => {
+    if (a.nodeId === _coverageMyNodeId) return -1;
+    if (b.nodeId === _coverageMyNodeId) return 1;
+    return a.oldest_daa - b.oldest_daa;
+  });
+  // Cap rows for visual density. v0.5.1.5: simple cap; v0.5.2 will add
+  // overlay mode for 100+ participants.
+  const MAX_ROWS = 20;
+  const visibleRows = sorted.slice(0, MAX_ROWS);
+  const overflow = sorted.length - visibleRows.length;
+
+  // SVG geometry. Width is computed at draw-time so the bar fills the
+  // panel; height is fixed at 180 px split evenly across rows.
+  const widthAttr = svg.getBoundingClientRect().width || 600;
+  const height = 180;
+  const rowH = Math.max(6, (height - 4) / visibleRows.length);
+  // viewBox in user units; we render at 1000 wide so coords are
+  // fraction × 1000.
+  svg.setAttribute('viewBox', `0 0 1000 ${height}`);
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', `${height}`);
+  // Build SVG content imperatively (faster than innerHTML thrash and
+  // keeps hover handlers clean).
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const ns = 'http://www.w3.org/2000/svg';
+
+  visibleRows.forEach((p, i) => {
+    const x1 = ((p.oldest_daa - minDaa) / range) * 1000;
+    const x2 = ((p.newest_daa - minDaa) / range) * 1000;
+    const w = Math.max(2, x2 - x1);
+    const y = 2 + i * rowH;
+    const isMe = p.nodeId === _coverageMyNodeId;
+    const color = _nodeColor(p.nodeId);
+
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', String(x1));
+    rect.setAttribute('y', String(y));
+    rect.setAttribute('width', String(w));
+    rect.setAttribute('height', String(rowH - 2));
+    rect.setAttribute('fill', color);
+    rect.setAttribute('rx', '2');
+    if (isMe) {
+      rect.setAttribute('stroke', '#fff');
+      rect.setAttribute('stroke-width', '1.5');
+      rect.setAttribute('opacity', '1');
+    } else {
+      rect.setAttribute('opacity', '0.85');
+    }
+    // Hover tooltip via SVG <title>. Works in both desktop and tap-hold
+    // on touch. nodeId trimmed to a short pseudonym — never IP or full id.
+    const title = document.createElementNS(ns, 'title');
+    const idShort = p.nodeId.slice(-4);
+    const ageHours = ((tip - p.oldest_daa) / 10) / 3600;
+    title.textContent = isMe
+      ? `YOU · ${ageHours.toFixed(1)}h of history · ${p.block_count || '?'} blocks`
+      : `Node ${idShort} · ${ageHours.toFixed(1)}h of history`;
+    rect.appendChild(title);
+    svg.appendChild(rect);
+
+    // "← YOU" label aligned to the right edge of the user's stripe.
+    if (isMe) {
+      const label = document.createElementNS(ns, 'text');
+      // Convert px x2 (0-1000) back to a position; SVG text in
+      // user-units. Pin label near the stripe's right edge but inside
+      // the SVG.
+      const labelX = Math.min(x2 + 6, 998);
+      label.setAttribute('x', String(labelX));
+      label.setAttribute('y', String(y + rowH / 2 + 3));
+      label.setAttribute('fill', '#fff');
+      label.setAttribute('font-size', '9');
+      label.setAttribute('font-family', 'system-ui, sans-serif');
+      label.setAttribute('text-anchor', labelX > 950 ? 'end' : 'start');
+      label.textContent = '← YOU';
+      svg.appendChild(label);
+    }
+  });
+
+  // X-axis labels: leftmost = oldest, mid = halfway, right = "now".
+  $('#coverage-axis-left').textContent = `oldest: ${_fmtHoursAgo(tip - minDaa)}`;
+  $('#coverage-axis-mid').textContent = _fmtHoursAgo((tip - minDaa) / 2);
+  $('#coverage-axis-right').textContent = 'now';
+
+  // Summary line.
+  const sourceLabel = payload.source === 'local-only'
+    ? 'local only — foundation aggregator unreachable'
+    : `${participants.length} active contributor${participants.length === 1 ? '' : 's'}`;
+  $('#coverage-source-hint').textContent = sourceLabel;
+  $('#coverage-summary').textContent = overflow > 0
+    ? `Showing top ${MAX_ROWS} of ${sorted.length} contributors.`
+    : '';
+}
+
+async function refreshCoverageBar() {
+  try {
+    const [mine, net] = await Promise.all([
+      window.mykai.coverage.mySlice(),
+      window.mykai.coverage.network(),
+    ]);
+    if (mine && mine.nodeId) _coverageMyNodeId = mine.nodeId;
+    renderCoverageBar(net);
+  } catch (err) {
+    // Silent — bar just stays hidden.
+  }
+}
+
+function startCoverageRefresh() {
+  if (_coverageRefreshTimer) clearInterval(_coverageRefreshTimer);
+  refreshCoverageBar();
+  _coverageRefreshTimer = setInterval(refreshCoverageBar, 60_000);
+}
+function stopCoverageRefresh() {
+  if (_coverageRefreshTimer) {
+    clearInterval(_coverageRefreshTimer);
+    _coverageRefreshTimer = null;
+  }
+}
 
 function showPanel(panel) {
   activePanel = panel;
@@ -974,7 +1319,7 @@ function showPanel(panel) {
 // Settings link toggles settings panel; clicking again returns to activity
 $('#btn-settings').addEventListener('click', (e) => { e.preventDefault(); showPanel(activePanel === 'settings' ? 'activity' : 'settings'); });
 $('#btn-pool').addEventListener('click', (e) => { e.preventDefault(); showPanel(activePanel === 'pool' ? 'activity' : 'pool'); });
-$('#btn-close-pool').addEventListener('click', (e) => { e.preventDefault(); showPanel('activity'); });
+$('#btn-close-pool').addEventListener('click', (e) => { e.preventDefault(); stopCoverageRefresh(); showPanel('activity'); });
 // Close button in settings header returns to activity
 $('#btn-close-settings').addEventListener('click', (e) => { e.preventDefault(); showPanel('activity'); });
 
@@ -1047,6 +1392,9 @@ async function loadSettings() {
   const shardSizeGB = cfg.shardSizeGB || 0;
   $('#setting-shard-size-gb').value = shardSizeGB;
   updateShardSizeHint(shardSizeGB);
+  // v0.5.4: kaspad seed sources (one wRPC URL per line)
+  const seeds = Array.isArray(cfg.kaspadSeedSources) ? cfg.kaspadSeedSources : [];
+  $('#setting-kaspad-seeds').value = seeds.join('\n');
   // Show/hide retention slider only in retention mode
   $('#retention-days-row').style.display = (storageMode === 'retention') ? '' : 'none';
   // Show only the hint matching the active mode
@@ -1486,6 +1834,45 @@ document.addEventListener('click', (e) => {
   copyDiagnosticInfo(btn);
 });
 
+// v0.5.4: Test connection button for kaspad seed URLs. Parses the
+// textarea, pings each URL via the seeds:test IPC, displays results
+// inline with green/red marks. Doesn't save anything — the user still
+// has to hit Save afterwards.
+$('#btn-test-seeds').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const statusEl = $('#seeds-test-status');
+  const btn = $('#btn-test-seeds');
+  const raw = $('#setting-kaspad-seeds').value || '';
+  const urls = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (urls.length === 0) {
+    statusEl.textContent = 'No URLs to test.';
+    statusEl.style.color = 'var(--text-secondary)';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  statusEl.textContent = `Testing ${urls.length} URL${urls.length === 1 ? '' : 's'}…`;
+  statusEl.style.color = 'var(--text-secondary)';
+  try {
+    const results = await window.mykai.seeds.test(urls);
+    const okCount = results.filter(r => r.ok).length;
+    const lines = results.map((r) => {
+      if (r.ok) {
+        return `<span style="color:var(--kaspa-teal,#49eacb);">✓</span> ${escapeHtml(r.url)} (${escapeHtml(r.network)})`;
+      }
+      return `<span style="color:var(--kaspa-amber,#f5a623);">✗</span> ${escapeHtml(r.url)} — ${escapeHtml(r.error)}`;
+    });
+    statusEl.innerHTML = `<div style="margin-top:4px;font-family:monospace;font-size:0.78em;line-height:1.6;">${okCount}/${results.length} reachable<br>${lines.join('<br>')}</div>`;
+    statusEl.style.color = '';
+  } catch (err) {
+    statusEl.textContent = `Test failed: ${err?.message || err}`;
+    statusEl.style.color = 'var(--kaspa-amber,#f5a623)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test connection';
+  }
+});
+
 $('#btn-save-settings').addEventListener('click', async () => {
   // v0.4: clamp retention days to kaspad's hard floor of 2 (panics below).
   const retentionDaysRaw = parseInt($('#setting-retention-days').value, 10) || 0;
@@ -1511,6 +1898,14 @@ $('#btn-save-settings').addEventListener('click', async () => {
     // v0.4: storage mode + retention days
     nodeStorageMode: $('#setting-storage-mode').value,
     retentionDays: retentionDays,
+    // v0.5.4: kaspad seed sources — wRPC URLs the fill loop pulls from
+    // when local kaspad has pruned a range. Parsed line-by-line, trimmed,
+    // empty lines dropped. Validates basic ws://wss:// prefix; bad lines
+    // are silently dropped (an alert here would be friction).
+    kaspadSeedSources: ($('#setting-kaspad-seeds').value || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && /^wss?:\/\//.test(l)),
     // v0.5: shardSizeGB moved to the dedicated Archive Pool page — saved
     // via its own Save button. Do NOT include here, otherwise saving
     // Settings would zero-out the pool contribution.
@@ -1926,10 +2321,9 @@ $('#btn-firstrun-fresh')?.addEventListener('click', async () => {
 });
 
 // --- Smooth second-by-second counters ---
-let lastUptimeBase = 0;      // last known uptime from backend
-let lastUptimeTimestamp = 0;  // when we received it
-let lastStreakBase = 0;
-let lastStreakTimestamp = 0;
+// (lastUptimeBase, lastUptimeTimestamp, lastStreakBase, lastStreakTimestamp
+//  hoisted at top of file via `var` to avoid TDZ when updateUI fires
+//  before this point in module init.)
 
 function startActivityTracker() {
   activityInterval = setInterval(() => {
@@ -1960,7 +2354,11 @@ function fmtNum(n) {
 }
 
 function fmtUptime(s) {
-  if (!s || s === 0) return '—';
+  // v0.5.5: distinguish "data missing" (null/undefined) from "real zero".
+  // Real zero is a meaningful value early in a session — show "0s" so the
+  // user sees the system is alive, not "—" which looks broken.
+  if (s == null || isNaN(s)) return '—';
+  if (s === 0) return '0s';
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -2247,22 +2645,42 @@ async function init() {
   startActivityTracker();
   addActivity('MyKAI Node started');
 
-  // Load storage size
+  // Load storage size. First sync call gets the cached value (instant),
+  // then async refresh fetches a fresh directory walk (~1-5s on cold cache).
   try {
     const dataSize = await window.mykai.config.dataSize();
     if (dataSize) $('#stat-storage').textContent = dataSize;
   } catch (_) {}
+  // Schedule a follow-up refresh once kaspad has had a moment to settle,
+  // so the storage figure reflects current disk usage even if first call
+  // returned a stale "0 B" from a cold cache.
+  setTimeout(async () => {
+    try {
+      const dataSize = await window.mykai.config.dataSize();
+      if (dataSize && dataSize !== '0 B') $('#stat-storage').textContent = dataSize;
+    } catch (_) {}
+  }, 5000);
 
   // Load cloud node status and mining UI
   updateMyNodes();
   updateMiningUI();
 
+  // v0.5.5 UX fix: call updateHealthStats IMMEDIATELY so TIME ONLINE /
+  // RECORD / TOTAL TIME ONLINE populate within the first ~100 ms instead
+  // of staying at "—" for 5 seconds while the interval waits. The 5-sec
+  // refresh continues below. Gamification IPC returns cached data, so
+  // this is essentially free.
+  updateHealthStats().catch(() => {});
   // Update connection indicators and health stats every 5 seconds
   setInterval(async () => {
+    // Run health stats even when state is 'stopped' — the gamification
+    // store still has totalUptime and longestStreak from prior sessions
+    // and the user wants to see those persistent values, not blanks.
+    // Only skip the agent/kasmap polls when the node isn't running.
+    try { await updateHealthStats(); } catch {}
     if (currentState !== 'stopped') {
       const agentStatus = await window.mykai.health.agentStatus();
       updateAgentIndicator(agentStatus);
-      await updateHealthStats();
       const cfg = await window.mykai.config.get();
       const kmStatus = await window.mykai.kasmap.status();
       updateKasMapIndicator(kmStatus, cfg.kasmap);

@@ -109,6 +109,181 @@ let isQuitting = false;
 let shardStorage = null;
 let shardPruneTimer = null;
 let _loggedShardCaptureError = false;
+// v0.5.3 Day 2: the fill loop that pulls assigned buckets and drops
+// over-covered ones. Created alongside shardStorage; runs once the
+// monitor is up and a swarm view exists.
+let shardFill = null;
+// v0.5.5: the random-challenge audit loop. Tests peers periodically to
+// keep them honest about what they claim to hold.
+let shardAudit = null;
+// v0.5.5 hardening: ring buffer of recent security events for the
+// dashboard's "Security" panel. 100 events max; old ones roll off.
+const _securityEvents = [];
+const SECURITY_EVENTS_MAX = 100;
+// v0.5.5: throttle live-capture events to ~1/sec so a busy chain
+// doesn't drown the buffer with identical "captured" entries.
+let _lastCaptureEventMs = 0;
+function _recordSecurityEvent(evt) {
+    const stamped = { ...evt, ts: Date.now() };
+    _securityEvents.push(stamped);
+    if (_securityEvents.length > SECURITY_EVENTS_MAX) {
+        _securityEvents.splice(0, _securityEvents.length - SECURITY_EVENTS_MAX);
+    }
+}
+// v0.5.1.5: coverage-bar publish + fetch state.
+//   _coveragePublishTimer  — interval that POSTs our slice to the
+//                            foundation aggregator every 15 min
+//   _coverageNetCache       — last successful aggregator response, so a
+//                            transient outage doesn't blank the bar
+let _coveragePublishTimer = null;
+let _coverageNetCache = { fetchedAt: 0, payload: null };
+// v0.5.3: swarm membership registry. Same Worker URL as the coverage
+// endpoint — the heartbeat IS the coverage publish; assignment is
+// computed locally from the member list it returns.
+//   _swarmMembersCache  — { fetchedAt, members: [{nodeId, budgetGB, ...}] }
+//   _swarmHeartbeatTimer — interval for the 5-min publish
+let _swarmMembersCache = { fetchedAt: 0, members: [] };
+let _swarmHeartbeatTimer = null;
+// Configurable foundation discovery URL. Default is a placeholder that
+// will 404 cleanly — provider's last-good cache + local-slice fallback
+// keep the bar functional until the real Cloudflare Worker is deployed.
+const COVERAGE_DISCOVERY_DEFAULT_URL = 'https://discovery.mykai.io/v1/coverage';
+const COVERAGE_NET_CACHE_TTL_MS = 60_000;
+const COVERAGE_PUBLISH_INTERVAL_MS = 15 * 60_000;
+async function _fetchNetworkCoverageWithCache(cfg, mySliceFactory) {
+    const now = Date.now();
+    // Serve cache if it's fresh.
+    if (_coverageNetCache.payload && (now - _coverageNetCache.fetchedAt) < COVERAGE_NET_CACHE_TTL_MS) {
+        return _coverageNetCache.payload;
+    }
+    const url = cfg.get('coverageDiscoveryUrl') || COVERAGE_DISCOVERY_DEFAULT_URL;
+    try {
+        // Node's built-in fetch (>=18) — no extra dep needed.
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        const resp = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (resp.ok) {
+            const body = await resp.json();
+            _coverageNetCache = { fetchedAt: now, payload: body };
+            return body;
+        }
+    }
+    catch (err) {
+        // Network error / abort / parse — fall through to fallback.
+    }
+    // Last-good cache wins if we have one (even if stale).
+    if (_coverageNetCache.payload) return _coverageNetCache.payload;
+    // Genuine cold-start fallback: synthesize a "just me" payload so the
+    // bar can render the user's own stripe even when fully offline.
+    const me = mySliceFactory();
+    if (!me) return null;
+    return {
+        as_of: Math.floor(now / 1000),
+        kaspad_chain_tip_daa: me.kaspad_chain_tip,
+        participants: [me],
+        source: 'local-only',
+    };
+}
+function _startCoveragePublish(cfg, getMySlice) {
+    if (_coveragePublishTimer) clearInterval(_coveragePublishTimer);
+    const tick = async () => {
+        const slice = getMySlice();
+        if (!slice) return; // not in pool yet
+        const url = cfg.get('coverageDiscoveryUrl') || COVERAGE_DISCOVERY_DEFAULT_URL;
+        try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 5000);
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(slice),
+                signal: ctrl.signal,
+            });
+            clearTimeout(t);
+        }
+        catch (err) {
+            // Foundation endpoint unreachable / not deployed yet — silent.
+            // Local-slice fallback in the fetch path keeps the bar working
+            // even when publication can't land. No retry storm; just wait
+            // for the next 15-min tick.
+        }
+    };
+    // Kick once on start, then every 15 min.
+    setTimeout(tick, 30_000); // 30s after boot so kaspad is up
+    _coveragePublishTimer = setInterval(tick, COVERAGE_PUBLISH_INTERVAL_MS);
+}
+
+// ─── v0.5.3: Swarm membership registry ────────────────────────────────
+// One heartbeat carries both the coverage info (for the bar) and the
+// HRW-assignment input (budget). Foundation Worker's response is the
+// member list — the only thing every node needs to compute its own
+// assignments deterministically. See docs/coverage-distribution-plan.md.
+const SWARM_DEFAULT_URL = 'https://discovery.mykai.io/v1/swarm';
+const SWARM_HEARTBEAT_INTERVAL_MS = 5 * 60_000;      // 5 min — volunteer-grade
+const SWARM_MEMBERS_CACHE_TTL_MS = 30_000;            // 30s — fill loop polls fast, this throttles
+const SWARM_HEARTBEAT_TIMEOUT_MS = 5_000;
+/**
+ * One round-trip to the Worker: POST our heartbeat, receive the swarm
+ * member list. If anything goes wrong we keep the last-good cache —
+ * outages degrade to "stale assignments," never to "broken pool."
+ *
+ * @param {any} cfg ConfigStore
+ * @param {Function} getMyHeartbeat returns the payload to POST, or null if not in pool
+ */
+async function _swarmHeartbeatAndFetch(cfg, getMyHeartbeat) {
+    const url = cfg.get('swarmDiscoveryUrl') || SWARM_DEFAULT_URL;
+    const payload = getMyHeartbeat();
+    if (!payload) return;
+    try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), SWARM_HEARTBEAT_TIMEOUT_MS);
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl.signal,
+        });
+        clearTimeout(t);
+        if (resp.ok) {
+            const body = await resp.json();
+            if (body && Array.isArray(body.members)) {
+                // Cache the full Worker response: members + archives +
+                // churn_storm. The renderer reads archives to draw the
+                // stack-of-wells; the fill loop reads members for HRW;
+                // churn_storm propagates into the fill loop's pause-
+                // drops logic.
+                _swarmMembersCache = {
+                    fetchedAt: Date.now(),
+                    members: body.members,
+                    lastResponse: body,
+                };
+            }
+        }
+    }
+    catch (err) {
+        // Worker down / not deployed yet — keep last-good cache. If we
+        // never had one, the cache stays at {fetchedAt:0, members:[]}
+        // and computeAssignments() returns [] until the Worker is up
+        // or a bootstrap-peer fallback lands in a later day.
+    }
+}
+/** Start the 5-min heartbeat loop. Same getMySlice-style factory pattern
+ *  as the coverage publish loop. Safe to call when shardStorage isn't
+ *  initialized yet — the factory returns null and we skip the round
+ *  trip until the next tick. */
+function _startSwarmHeartbeat(cfg, getMyHeartbeat) {
+    if (_swarmHeartbeatTimer) clearInterval(_swarmHeartbeatTimer);
+    const tick = () => _swarmHeartbeatAndFetch(cfg, getMyHeartbeat);
+    setTimeout(tick, 30_000); // 30s after boot so kaspad has tip info
+    _swarmHeartbeatTimer = setInterval(tick, SWARM_HEARTBEAT_INTERVAL_MS);
+}
+/** Read-only access to the cached member list. Returns the last-good
+ *  even if stale. The fill loop will compute against whatever it gets;
+ *  staleness is bounded by SWARM_HEARTBEAT_INTERVAL_MS in steady state. */
+function _getCachedSwarmMembers() {
+    return _swarmMembersCache.members;
+}
 let manager;
 let monitor;
 let config;
@@ -200,6 +375,14 @@ function createWindow() {
             // those APIs are sandbox-safe.
             sandbox: true,
         },
+    });
+    // Debug: forward renderer console messages to main stdout so we
+    // can see errors in the activity feed / terminal.
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        const lvl = ['debug', 'info', 'warn', 'error'][level] || 'log';
+        if (lvl === 'error' || lvl === 'warn' || message.includes('[mykai-app]') || message.includes('[health-stats]')) {
+            console.log(`[RENDERER ${lvl}] ${message} (${sourceId}:${line})`);
+        }
     });
     const rendererPath = path_1.default.join(__dirname, '..', '..', 'src', 'renderer', 'index.html');
     mainWindow.loadFile(rendererPath);
@@ -579,9 +762,24 @@ async function initialize() {
                 mainWindow?.webContents.send('node:activity', `Shard ${info.stage} error: ${info.error}`);
             });
             await shardStorage.init();
+            // v0.5.3 hardening: bind storage to the current Kaspa
+            // network. First call records it; later calls verify match.
+            // A mismatch is fatal — we refuse to mix networks because
+            // a block hash is only meaningful within its network.
+            const networkName = appConfig.network || 'mainnet';
+            const bindResult = shardStorage.bindNetwork(networkName);
+            if (!bindResult.ok) {
+                mainWindow?.webContents.send('node:activity',
+                    `❌ Shard storage network mismatch: ${bindResult.error}. ` +
+                    `Switch network back, or delete shard-storage.db to start fresh.`);
+                shardStorage.close();
+                shardStorage = null;
+                // Do not proceed with init — abort the shard path.
+                return;
+            }
             const stats = shardStorage.getStats();
             mainWindow?.webContents.send('node:activity',
-                `Shard storage ready: ${stats.blockCount} blocks, ${(stats.totalBytes / 1024 / 1024).toFixed(1)} MB held, budget ${appConfig.shardSizeGB} GB`);
+                `Shard storage ready (${networkName}): ${stats.blockCount} blocks, ${(stats.totalBytes / 1024 / 1024).toFixed(1)} MB held, budget ${appConfig.shardSizeGB} GB`);
             // Periodic pruning to enforce disk budget. Cheap to call; pruneToFit
             // returns immediately when under budget. Run every 5 minutes.
             shardPruneTimer = setInterval(() => {
@@ -589,6 +787,107 @@ async function initialize() {
                 const budgetBytes = (appConfig.shardSizeGB || 0) * 1024 * 1024 * 1024;
                 shardStorage.pruneToFit(budgetBytes);
             }, 5 * 60_000);
+            // v0.5.1.5: kick off the coverage-bar publish loop. POSTs this
+            // node's slice to the foundation aggregator every 15 min so
+            // other MyKAI nodes can render us on their bar. Silent if the
+            // aggregator endpoint isn't deployed yet — the bar falls back
+            // to local-only rendering until the foundation Cloudflare
+            // Worker is live.
+            _startCoveragePublish(config, () => {
+                if (!shardStorage) return null;
+                const s = shardStorage.getStats();
+                return {
+                    nodeId: config.get('nodeId') || 'unknown',
+                    oldest_daa: s.oldestDaa,
+                    newest_daa: s.newestDaa,
+                    kaspad_chain_tip: monitor?._status?.virtualDaaScore || null,
+                    block_count: s.blockCount,
+                    last_seen: Math.floor(Date.now() / 1000),
+                };
+            });
+            // v0.5.3: swarm membership heartbeat. Posts this node's
+            // (budget, coverage, tip) to the foundation Worker every 5 min;
+            // receives the swarm member list in response. The Day-2 fill
+            // loop will use that cached member list to compute its own HRW
+            // assignments locally.
+            _startSwarmHeartbeat(config, () => {
+                if (!shardStorage) return null;
+                const s = shardStorage.getStats();
+                // v0.5.3 Day 3: include our publicly-reachable endpoint
+                // (if any) so peers can pull from us. Loopback-only
+                // nodes (the default in v0.5.1) omit this — they're
+                // still in the swarm for HRW purposes but the fill
+                // loop's peer-pull skips them. When v0.5.2's public
+                // binding + NAT check lands, this will be filled in
+                // for reachable nodes.
+                const endpoint = config.get('explorerPublicUrl') || undefined;
+                return {
+                    nodeId: config.get('nodeId') || 'unknown',
+                    budgetGB: appConfig.shardSizeGB || 0,
+                    oldest_daa: s.oldestDaa,
+                    newest_daa: s.newestDaa,
+                    kaspad_chain_tip: monitor?._status?.virtualDaaScore || null,
+                    block_count: s.blockCount,
+                    last_seen: Math.floor(Date.now() / 1000),
+                    endpoint,
+                };
+            });
+            // v0.5.3 Day 2: spin up the fill loop. It computes HRW
+            // assignments locally from the cached swarm view, pulls
+            // missing buckets, and drops over-covered ones. Wires
+            // straight into existing kaspad monitor + shardStorage —
+            // no new infrastructure required.
+            try {
+                const { ShardFill } = require('./shard-fill');
+                shardFill = new ShardFill({ shardStorage, monitor, config });
+                shardFill.setMembersGetter(() => _getCachedSwarmMembers());
+                shardFill.setSwarmFlagsGetter(() => {
+                    const last = _swarmMembersCache.lastResponse || {};
+                    return { churn_storm: !!last.churn_storm };
+                });
+                shardFill.on('log', (msg) => {
+                    mainWindow?.webContents.send('node:activity', `Fill: ${msg}`);
+                });
+                shardFill.on('pulled', (info) => {
+                    mainWindow?.webContents.send('node:activity',
+                        `Pulled bucket ${info.bucketId}: +${info.count} blocks from ${info.source}`);
+                    _recordSecurityEvent({ type: 'pull-verified', bucketId: info.bucketId, count: info.count, source: info.source });
+                });
+                shardFill.on('security-event', (info) => {
+                    _recordSecurityEvent(info);
+                });
+                shardFill.on('error', (info) => {
+                    mainWindow?.webContents.send('node:activity',
+                        `Fill error (${info.stage}): ${info.error}`);
+                });
+                shardFill.start();
+                // v0.5.5: start the audit loop alongside fill. Uses
+                // shardFill's smart-ban strike system so audit failures
+                // and ingest failures share a strike budget per peer.
+                try {
+                    const { ShardAudit } = require('./shard-audit');
+                    shardAudit = new ShardAudit({
+                        monitor,
+                        config,
+                        shardFill,
+                        getSwarmMembers: () => _getCachedSwarmMembers(),
+                    });
+                    shardAudit.on('log', (msg) => {
+                        mainWindow?.webContents.send('node:activity', `Audit: ${msg}`);
+                    });
+                    shardAudit.on('error', (info) => {
+                        mainWindow?.webContents.send('node:activity',
+                            `Audit error (${info.stage}): ${info.error}`);
+                    });
+                    shardAudit.start();
+                } catch (auditErr) {
+                    mainWindow?.webContents.send('node:activity',
+                        `Audit loop init failed: ${auditErr?.message || auditErr}`);
+                }
+            } catch (err) {
+                mainWindow?.webContents.send('node:activity',
+                    `Fill loop init failed: ${err?.message || err}`);
+            }
         }
         catch (err) {
             mainWindow?.webContents.send('node:activity',
@@ -985,8 +1284,35 @@ async function initialize() {
             // Convert hex hash to 32-byte buffer for SQLite BLOB primary key.
             const hashBytes = Buffer.from(block.hash, 'hex');
             if (hashBytes.length !== 32) return; // malformed
-            const bodyJson = Buffer.from(JSON.stringify(block.rawBlock), 'utf-8');
-            shardStorage.captureBlock(hashBytes, block.daaScore || 0, bodyJson, true);
+            // v0.5.3 hardening: strip verboseData on every storage
+            // path. It's redundant (we get accurate verboseData from
+            // kaspad, not lied to here) but it keeps the storage format
+            // CONSISTENT — every stored block has the same shape
+            // regardless of source. Indexers regenerate verboseData
+            // themselves from canonical bytes; ours would go stale on
+            // reorgs anyway (geth #28992 class bug).
+            if (!block.rawBlock.header) return; // malformed; skip
+            const sanitized = {
+                header: block.rawBlock.header,
+                transactions: block.rawBlock.transactions || [],
+            };
+            const bodyJson = Buffer.from(JSON.stringify(sanitized), 'utf-8');
+            // v0.5.1: pass blueScore so /shard/blocks can walk forward by it.
+            // rpc-monitor extracts blueScore from the header; null means "missing"
+            // (rare — would indicate a malformed kaspad notification).
+            const blueScore = typeof block.blueScore === 'number' ? block.blueScore : null;
+            const wasStored = shardStorage.captureBlock(hashBytes, block.daaScore || 0, bodyJson, true, blueScore);
+            // v0.5.5: surface live-capture events to the dashboard's
+            // Security panel so the user can see verified blocks landing
+            // in real time, even in solo-fill mode where no fill-loop
+            // pulls happen. These are coming from local kaspad —
+            // trusted, no hash check needed — so we tag them with
+            // source='live-kaspad' to distinguish from pull-verified.
+            // Sample at most ~once/sec to avoid flooding the buffer.
+            if (wasStored && (!_lastCaptureEventMs || Date.now() - _lastCaptureEventMs > 1000)) {
+                _lastCaptureEventMs = Date.now();
+                _recordSecurityEvent({ type: 'pull-verified', count: 1, source: 'live-kaspad', bucketId: 'tip' });
+            }
         }
         catch (err) {
             // Capture failures are non-fatal — kaspad still has the block,
@@ -1579,6 +1905,220 @@ async function initialize() {
                 body: JSON.parse(Buffer.from(result.body).toString('utf-8')),
             };
         },
+        // ─── v0.5.1: explorer-backend providers ─────────────────────────
+        // Each method returns null when explorer mode is off or paused;
+        // agent-bridge converts that to a 503 so the indexer rotates to a
+        // different pinned pool peer. Live config read (not the appConfig
+        // closure) so the toggle takes effect without restart.
+        getShardDagInfo: async () => {
+            if (!shardStorage) return null;
+            // v0.5.1: bundled model. Pool participation IS explorer
+            // serving — no separate toggle, no Pause, no temporary
+            // backoff. If shardSizeGB > 0 (you're in the pool), the
+            // endpoints answer. If you want out, leave the pool by
+            // setting shardSizeGB to 0. Honest binary.
+            if (!(config.get('shardSizeGB') > 0)) return null;
+            if (!monitor) return null;
+            // Proxy kaspad's getBlockDagInfo, then overlay pool-specific
+            // fields. The indexer treats `pool_floor_daa` as the lowest DAA
+            // score it can request from this peer — below that we 404.
+            const dag = await monitor.rpcCall('getBlockDagInfo').catch(() => null);
+            if (!dag || !dag.params) return null;
+            return {
+                ...dag.params,
+                pool_floor_daa: shardStorage.getPoolFloorDaa(),
+                server_version: `MyKAI-${require('../../package.json').version || 'dev'}`,
+                capabilities: {
+                    virtual_chain: true,  // we proxy kaspad's VC endpoint
+                    include_txs: true,    // captured bodies include transactions
+                },
+            };
+        },
+        getShardBlocksAfterLowHash: async (lowHashHex, includeTxs, limit) => {
+            if (!shardStorage) return null;
+            // v0.5.1: bundled model. Pool participation IS explorer
+            // serving — no separate toggle, no Pause, no temporary
+            // backoff. If shardSizeGB > 0 (you're in the pool), the
+            // endpoints answer. If you want out, leave the pool by
+            // setting shardSizeGB to 0. Honest binary.
+            if (!(config.get('shardSizeGB') > 0)) return null;
+            const lowHashBytes = Buffer.from(lowHashHex, 'hex');
+            // Anchor the walk on the low_hash's blue_score. If we don't have
+            // the anchor block stored, the request is either (a) for a block
+            // below our floor or (b) for a hash we never saw. Both look the
+            // same from here — return below_floor so the indexer rotates.
+            const scores = shardStorage.getScoresByHash(lowHashBytes);
+            if (!scores || scores.blueScore == null) {
+                return {
+                    below_floor: true,
+                    pool_floor_daa: shardStorage.getPoolFloorDaa(),
+                };
+            }
+            const rows = shardStorage.getBlocksAfterBlueScore(scores.blueScore, limit);
+            // v0.5.1 streaming path: hand the agent-bridge raw body bytes
+            // (already kaspad-shape JSON) so it can write directly into
+            // the response stream without a JSON.parse / JSON.stringify
+            // round trip. Big win on residential laptops — the parse +
+            // stringify pair is the dominant CPU cost otherwise.
+            // include_txs=false handling deferred to v0.5.2 (transactions
+            // are inline in the body — would need to splice them out).
+            const blocksBytes = rows.map((r) => Buffer.from(r.body));
+            const block_hashes = rows.map((r) => Buffer.from(r.hash).toString('hex'));
+            return { block_hashes, blocksBytes };
+        },
+        getShardVirtualChain: async (startHashHex, tipDistance) => {
+            // v0.5.1: bundled model. Pool participation IS explorer
+            // serving — no separate toggle, no Pause, no temporary
+            // backoff. If shardSizeGB > 0 (you're in the pool), the
+            // endpoints answer. If you want out, leave the pool by
+            // setting shardSizeGB to 0. Honest binary.
+            if (!(config.get('shardSizeGB') > 0)) return null;
+            if (!monitor) return null;
+            // Pure proxy — chain selection is computed by the live kaspad;
+            // we don't store it. A pool participant whose local kaspad lags
+            // or is offline will fail this call (caller returns 503 with the
+            // VC-capability message in the error path).
+            const resp = await monitor.rpcCall('getVirtualChainFromBlockV2', {
+                startHash: startHashHex,
+                includeAcceptedTransactionIds: true,
+            }, 10_000).catch(() => null);
+            if (!resp || !resp.params) return null;
+            return resp.params;
+        },
+        // ─── v0.5.1.5: coverage bar providers ────────────────────────
+        // Two functions — one synchronous "my slice" (cheap, used by both
+        // the renderer poll and the publish loop) and one async "network"
+        // (fetches the foundation aggregator with last-good caching).
+        getCoverageMySlice: () => {
+            if (!shardStorage) return null;
+            if (!(config.get('shardSizeGB') > 0)) return null;
+            const s = shardStorage.getStats();
+            const nodeId = config.get('nodeId') || 'unknown';
+            // Local chain tip — comes from monitor's last poll. May be
+            // null briefly at startup; renderer handles that.
+            const chainTipDaa = monitor?._status?.virtualDaaScore || null;
+            return {
+                nodeId,
+                oldest_daa: s.oldestDaa,
+                newest_daa: s.newestDaa,
+                kaspad_chain_tip: chainTipDaa,
+                block_count: s.blockCount,
+                last_seen: Math.floor(Date.now() / 1000),
+            };
+        },
+        // ─── v0.5.3: swarm membership + assignments ───────────────────
+        // Read-only view of the cached swarm member list. The bar uses
+        // this for the multi-stripe render; the Day-2 fill loop will use
+        // it to compute its own assignments. Live config read so a user
+        // who leaves the pool (shardSizeGB→0) immediately stops being
+        // counted as a participant from the renderer's perspective.
+        // v0.5.5 hardening: recent security events for the dashboard.
+        // Returns the in-memory ring buffer (max 100). Includes pulls
+        // verified, blocks rejected, verboseData stripped, peers banned.
+        getSecurityEvents: () => {
+            // Snapshot; renderer reads + renders.
+            return _securityEvents.slice().reverse();
+        },
+        getSwarmMembers: () => {
+            const members = _getCachedSwarmMembers();
+            // v0.5.3 Day 3: also return archive-progress and churn-storm
+            // info from the foundation Worker's last response, so the
+            // renderer can draw the stack-of-wells visualization
+            // (Archive Node #1: 100%, #2: 84%, etc.) and respect the
+            // storm flag.
+            const lastResponse = _swarmMembersCache.lastResponse || {};
+            return {
+                members,
+                archives: lastResponse.archives || [],
+                churn_storm: !!lastResponse.churn_storm,
+                fetched_at: _swarmMembersCache.fetchedAt,
+                stale: (Date.now() - _swarmMembersCache.fetchedAt) > 15 * 60_000,
+                count: members.length,
+            };
+        },
+        // Compute MY assignments locally from the cached swarm view.
+        // Pure function — same input, same output across all nodes — so
+        // any node can predict any other node's assignments without
+        // asking. That's the whole point of HRW.
+        //
+        // Returns the bucket ids I should be holding right now, in
+        // descending HRW-score order (the strongest claims first).
+        getMyAssignments: () => {
+            if (!shardStorage) return null;
+            const shardSizeGB = config.get('shardSizeGB') || 0;
+            if (shardSizeGB <= 0) return { assignments: [], reason: 'not in pool' };
+            const myNodeId = config.get('nodeId') || 'unknown';
+            const members = _getCachedSwarmMembers();
+            if (!members || members.length === 0) {
+                return { assignments: [], reason: 'no swarm view yet' };
+            }
+            const tipDaa = monitor?._status?.virtualDaaScore || 0;
+            if (!tipDaa) return { assignments: [], reason: 'kaspad tip unknown' };
+            // Candidate buckets: from the swarm-wide oldest claimed bucket
+            // up to the current tip. Bound the scan so we don't waste CPU
+            // when one wild-budget participant claims a huge floor.
+            const swarmFloorDaa = Math.min(
+                ...members.map((m) => m.oldest_daa).filter((v) => v != null)
+            );
+            const swarmAssign = require('./swarm-assignment');
+            const tipBucketId = swarmAssign.bucketIdForDaa(tipDaa);
+            const floorBucketId = Number.isFinite(swarmFloorDaa)
+                ? swarmAssign.bucketIdForDaa(swarmFloorDaa)
+                : tipBucketId - 100; // sane default while bootstrapping
+            // Cap the scan at 5000 candidate buckets to bound CPU even
+            // in pathological cases (HRW scoring is fast but not free).
+            const start = Math.max(floorBucketId, tipBucketId - 5000);
+            const candidates = [];
+            for (let b = tipBucketId; b >= start; b--) candidates.push(b);
+            const assigned = swarmAssign.computeAssignments(
+                myNodeId,
+                shardSizeGB,
+                members.map((m) => ({ nodeId: m.nodeId, budgetGB: m.budgetGB || 0 })),
+                candidates
+            );
+            return {
+                assignments: assigned,
+                assignedCount: assigned.length,
+                candidateCount: candidates.length,
+                tipBucketId,
+                swarmFloorBucketId: floorBucketId,
+            };
+        },
+        getCoverageNetwork: async () => {
+            // Try the foundation aggregator first; fall back to last-good
+            // cache or "just me" if unreachable. The discovery URL is
+            // configurable so the foundation deploy can move without an
+            // app update.
+            return await _fetchNetworkCoverageWithCache(config, () => {
+                if (!shardStorage) return null;
+                if (!(config.get('shardSizeGB') > 0)) return null;
+                const s = shardStorage.getStats();
+                return {
+                    nodeId: config.get('nodeId') || 'unknown',
+                    oldest_daa: s.oldestDaa,
+                    newest_daa: s.newestDaa,
+                    kaspad_chain_tip: monitor?._status?.virtualDaaScore || null,
+                    block_count: s.blockCount,
+                    last_seen: Math.floor(Date.now() / 1000),
+                };
+            });
+        },
+        getShardBlockRange: async (fromDaa, toDaa, _includeTxs) => {
+            if (!shardStorage) return null;
+            // v0.5.1: bundled model. Pool participation IS explorer
+            // serving — no separate toggle, no Pause, no temporary
+            // backoff. If shardSizeGB > 0 (you're in the pool), the
+            // endpoints answer. If you want out, leave the pool by
+            // setting shardSizeGB to 0. Honest binary.
+            if (!(config.get('shardSizeGB') > 0)) return null;
+            // 5000-row cap is enforced agent-bridge-side. Limit here is a
+            // safety net in case the cap shifts later.
+            const rows = shardStorage.getByDaaRange(fromDaa, toDaa, 5000);
+            // Raw-bytes streaming path — same rationale as
+            // getShardBlocksAfterLowHash above.
+            const blocksBytes = rows.map((r) => Buffer.from(r.body));
+            return { blocksBytes };
+        },
     });
     // Start agent bridge
     agentBridge.start();
@@ -1886,6 +2426,18 @@ else {
             }
             catch { /* ignore */ }
             shardStorage = null;
+        }
+        if (shardAudit) {
+            try { shardAudit.stop(); }
+            catch { /* ignore */ }
+            shardAudit = null;
+        }
+        if (shardFill) {
+            try {
+                shardFill.stop();
+            }
+            catch { /* ignore */ }
+            shardFill = null;
         }
         electron_1.app.exit(0);
     });

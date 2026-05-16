@@ -155,26 +155,59 @@
     <!-- v0.5: Archive Pool contribution card (visible when shardSizeGB > 0) -->
     <div id="shard-card" class="hidden">
       <div id="shard-card-header" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-secondary,#1a1a1a);border-bottom:1px solid var(--border,#2a2a2a);">
-        <span class="shard-card-title" style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);">ARCHIVE POOL</span>
+        <span class="shard-card-title" style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);">YOUR ARCHIVE NODE</span>
         <span id="shard-card-status" style="font-size:0.85em;color:var(--text-secondary);">—</span>
       </div>
-      <div id="shard-card-body" style="padding:10px 14px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
-        <div>
-          <div style="font-size:0.75em;color:var(--text-secondary);">Blocks held</div>
-          <div id="shard-stat-blocks" style="font-size:1.2em;font-weight:600;">0</div>
+      <div id="shard-card-body" style="padding:10px 14px;">
+        <!-- v0.5.3: dual progress bars — KASPA NODE and ARCHIVE NODE. -->
+        <!-- The Kaspa node bar is normally 100% (synced) but shows progress
+             during initial sync. The Archive node bar fills from 0% to 100%
+             as the user's committed budget is filled with captured + pulled
+             blocks. -->
+        <div style="display:grid;grid-template-columns:120px 1fr 60px;gap:10px;align-items:center;margin-bottom:6px;font-size:0.85em;">
+          <span style="color:var(--text-secondary);font-weight:600;letter-spacing:0.4px;font-size:0.78em;">KASPA NODE</span>
+          <div class="sync-track" style="height:10px;background:var(--bg-secondary,#1a1a1a);border-radius:5px;overflow:hidden;border:1px solid var(--border,#2a2a2a);">
+            <div id="kaspa-node-fill" class="sync-fill" style="height:100%;width:0%;background:var(--kaspa-teal,#49eacb);transition:width 0.4s ease;"></div>
+          </div>
+          <span id="kaspa-node-pct" style="font-size:0.85em;text-align:right;">—</span>
         </div>
-        <div>
-          <div style="font-size:0.75em;color:var(--text-secondary);">Disk used</div>
-          <div id="shard-stat-used" style="font-size:1.2em;font-weight:600;">0 MB</div>
+        <div style="display:grid;grid-template-columns:120px 1fr 60px;gap:10px;align-items:center;margin-bottom:12px;font-size:0.85em;">
+          <span style="color:var(--text-secondary);font-weight:600;letter-spacing:0.4px;font-size:0.78em;" title="How full your committed archive slice is. Fills via live capture + (when configured) deep-history pulls from archival sources.">YOUR SLICE</span>
+          <div class="sync-track" style="height:10px;background:var(--bg-secondary,#1a1a1a);border-radius:5px;overflow:hidden;border:1px solid var(--border,#2a2a2a);">
+            <div id="archive-node-fill" class="sync-fill" style="height:100%;width:0%;background:var(--kaspa-teal,#49eacb);transition:width 0.4s ease;"></div>
+          </div>
+          <span id="archive-node-pct" style="font-size:0.85em;text-align:right;">—</span>
         </div>
-        <div>
-          <div style="font-size:0.75em;color:var(--text-secondary);">Budget</div>
-          <div id="shard-stat-budget" style="font-size:1.2em;font-weight:600;">0 GB</div>
+        <!-- Numeric stats below the bars. -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;border-top:1px solid var(--border,#2a2a2a);padding-top:10px;">
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Blocks held</div>
+            <div id="shard-stat-blocks" style="font-size:1.2em;font-weight:600;">0</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Disk used</div>
+            <div id="shard-stat-used" style="font-size:1.2em;font-weight:600;">0 MB</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Budget</div>
+            <div id="shard-stat-budget" style="font-size:1.2em;font-weight:600;">0 GB</div>
+          </div>
+          <div>
+            <div style="font-size:0.75em;color:var(--text-secondary);">Captures / min</div>
+            <div id="shard-stat-rate" style="font-size:1.2em;font-weight:600;">0</div>
+          </div>
         </div>
-        <div>
-          <div style="font-size:0.75em;color:var(--text-secondary);">Captures / min</div>
-          <div id="shard-stat-rate" style="font-size:1.2em;font-weight:600;">0</div>
-        </div>
+      </div>
+    </div>
+
+    <!-- v0.5.5: Security card — recent verification events from fill + audit -->
+    <div id="security-card" class="hidden" style="margin-bottom:6px;">
+      <div id="security-card-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:var(--bg-secondary,#1a1a1a);border-bottom:1px solid var(--border,#2a2a2a);">
+        <span style="font-weight:600;letter-spacing:0.5px;font-size:0.8em;color:var(--text-secondary);">SECURITY</span>
+        <span id="security-card-summary" style="font-size:0.78em;color:var(--text-secondary);">—</span>
+      </div>
+      <div id="security-card-body" style="padding:6px 14px 10px;font-size:0.78em;max-height:90px;overflow-y:auto;color:var(--text-secondary);">
+        <div id="security-events-list">No security events yet.</div>
       </div>
     </div>
 
@@ -339,10 +372,29 @@
         </div>
       </div>
 
+      <!-- v0.5.1.5: Network coverage bar — visible whenever the user is
+           in the pool. Multi-stripe SVG showing every active participant's
+           DAA range, with the user's own stripe highlighted. -->
+      <div id="pool-coverage-card" class="hidden" style="border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:12px 14px;margin-bottom:14px;">
+        <div style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);margin-bottom:8px;display:flex;justify-content:space-between;">
+          <span>NETWORK COVERAGE</span>
+          <span id="coverage-source-hint" style="font-weight:400;color:var(--text-secondary);font-style:italic;">—</span>
+        </div>
+        <div id="coverage-svg-wrap" style="width:100%;overflow:hidden;">
+          <svg id="coverage-svg" width="100%" height="180" preserveAspectRatio="none" style="display:block;background:var(--bg-secondary,#1a1a1a);border-radius:4px;"></svg>
+        </div>
+        <div id="coverage-axis" style="display:flex;justify-content:space-between;font-size:0.72em;color:var(--text-secondary);margin-top:4px;padding:0 2px;">
+          <span id="coverage-axis-left">—</span>
+          <span id="coverage-axis-mid">—</span>
+          <span id="coverage-axis-right">now</span>
+        </div>
+        <div id="coverage-summary" style="margin-top:10px;font-size:0.85em;color:var(--text-secondary);"></div>
+      </div>
+
       <!-- LIVE STATUS — visible when joined -->
       <div id="pool-live-status" class="hidden" style="border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:12px 14px;">
         <div style="font-weight:600;letter-spacing:0.5px;font-size:0.85em;color:var(--text-secondary);margin-bottom:8px;display:flex;justify-content:space-between;">
-          <span>POOL STATUS — LIVE</span>
+          <span>ARCHIVE NODE — LIVE</span>
           <span id="pool-live-daa-range" style="font-weight:400;color:var(--text-secondary);">—</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
@@ -450,6 +502,35 @@
       </div>
       <div class="setting-hint" id="storage-mode-hint-testnet" style="display:none;color:var(--kaspa-amber,#f5a623);">
         Archival mode is disabled on testnet because testnet resets can permanently delete archival data. Switch to mainnet to use archival.
+      </div>
+
+      <!-- v0.5.4: Archive seed sources — kaspad wRPC URLs the fill loop
+           tries when local kaspad has pruned a range and no MyKAI peer
+           has it yet. Public archival kaspad nodes (foundation-run or
+           community-run). One URL per line. Empty = no fallback. -->
+      <h3 style="margin-top:24px;">Archive seed sources</h3>
+      <div class="setting-hint" style="margin-bottom:8px;">
+        wRPC URLs of archival kaspad nodes the fill loop can pull from when
+        local kaspad has pruned a range. One per line. <strong>Every block
+        pulled is hash-verified against your local kaspad's PoW chain</strong>
+        — these sources don't need to be trusted, the math catches lies.
+      </div>
+      <div class="setting-row" style="align-items:flex-start;">
+        <label style="padding-top:4px;">URLs</label>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <textarea id="setting-kaspad-seeds" rows="3"
+            placeholder="wss://your-friend-archival:18110&#10;wss://another-source:18110"
+            style="width:280px;resize:vertical;font-family:monospace;font-size:0.85em;"></textarea>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button id="btn-test-seeds" class="btn-small" style="font-size:0.8em;">Test connection</button>
+            <span id="seeds-test-status" style="font-size:0.8em;color:var(--text-secondary);"></span>
+          </div>
+        </div>
+      </div>
+      <div class="setting-hint" style="margin-top:6px;font-size:0.8em;">
+        <strong>For the archival operator:</strong> run kaspad with
+        <code>--archival --rpc-listen=0.0.0.0:18110</code>, then open port 18110
+        (or use a Tailscale/Cloudflare Tunnel for private sharing).
       </div>
 
       <!-- Archive Pool moved to its own page (header button); kept this comment as a breadcrumb -->

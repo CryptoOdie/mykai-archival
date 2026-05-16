@@ -5,19 +5,25 @@
   "main": "dist/main/main.js",
   "author": "MyKAI Archival Contributors",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0 <23.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "start": "electron .",
     "start:debug": "electron --inspect=5858 .",
-    "build": "electron-builder --dir"
+    "build": "electron-builder --dir",
+    "verify": "node ../scripts/verify-build.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.102.1",
-    "electron-store": "^8.2.0",
-    "electron-updater": "^6.8.3",
-    "sql.js": "^1.10.3",
-    "ws": "^8.18.0"
+    "@noble/hashes": "2.2.0",
+    "@supabase/supabase-js": "2.102.1",
+    "electron-store": "8.2.0",
+    "electron-updater": "6.8.3",
+    "sql.js": "1.10.3",
+    "ws": "8.18.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "31.0.0"
   }
 }

@@ -648,7 +648,15 @@ class RpcMonitor extends events_1.EventEmitter {
         }
         try {
             const __parseMark = (0, perf_hot_1.startMark)();
-            const msg = JSON.parse(raw);
+            // v0.5.4 fix: JavaScript JSON.parse silently truncates u64
+            // values above 2^53. Kaspa block nonces are u64 and routinely
+            // exceed this, so the captured nonce becomes wrong → block
+            // hashes computed from it don't match kaspad's claimed hash.
+            // Workaround: wrap `nonce` field values in quotes via regex
+            // before parsing, so they arrive as strings we can convert
+            // to BigInt where precision matters.
+            const safeRaw = raw.replace(/"nonce":\s*(\d{16,})/g, '"nonce":"$1"');
+            const msg = JSON.parse(safeRaw);
             (0, perf_hot_1.endMark)(`rpc.JSON.parse.${source}`, __parseMark);
             const id = msg.id;
             const method = msg.method;

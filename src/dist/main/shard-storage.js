@@ -128,12 +128,14 @@ class ShardStorage extends events_1.EventEmitter {
             CREATE TABLE IF NOT EXISTS blocks (
                 hash         BLOB PRIMARY KEY,
                 daa_score    INTEGER NOT NULL,
+                blue_score   INTEGER,
                 body         BLOB NOT NULL,
                 size_bytes   INTEGER NOT NULL,
                 captured_at  INTEGER NOT NULL,
                 is_accepted  INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_blocks_daa ON blocks(daa_score);
+            CREATE INDEX IF NOT EXISTS idx_blocks_blue ON blocks(blue_score);
             CREATE INDEX IF NOT EXISTS idx_blocks_captured ON blocks(captured_at);
 
             CREATE TABLE IF NOT EXISTS meta (
@@ -141,7 +143,7 @@ class ShardStorage extends events_1.EventEmitter {
                 value TEXT NOT NULL
             );
         `);
-        this.db.run(`INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')`);
+        this.db.run(`INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '2')`);
         this.db.run(`INSERT OR IGNORE INTO meta (key, value) VALUES ('created_at', ?)`, [String(Date.now())]);
         this._markDirty();
     }
@@ -150,6 +152,78 @@ class ShardStorage extends events_1.EventEmitter {
         // Always-safe re-issue: CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS.
         // No-op if schema already current.
         this._createSchema();
+        // v0.5.1: blue_score column added for /shard/blocks endpoint.
+        // ALTER TABLE ADD COLUMN errors if the column exists, so probe first.
+        try {
+            const r = this.db.exec(`PRAGMA table_info(blocks)`);
+            const cols = r.length > 0 ? r[0].values.map((row) => row[1]) : [];
+            if (!cols.includes('blue_score')) {
+                this.db.run(`ALTER TABLE blocks ADD COLUMN blue_score INTEGER`);
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_blocks_blue ON blocks(blue_score)`);
+                this.db.run(`UPDATE meta SET value = '2' WHERE key = 'schema_version'`);
+                this._markDirty();
+                this.emit('log', 'Migrated shard DB schema to v2 (added blue_score column)');
+            }
+        } catch (err) {
+            this.emit('error', { stage: 'migrate', error: err?.message || String(err) });
+        }
+    }
+
+    /**
+     * Bind this storage to a specific Kaspa network (mainnet / TN12 /
+     * devnet / simnet). Stored as a meta value on first call; subsequent
+     * calls verify the network matches. Mismatch indicates either user
+     * config error or a malicious cross-network attack — we refuse to
+     * write blocks under the wrong network tag.
+     *
+     * Returns: { ok: true } on success, { ok: false, error } if the
+     * stored network conflicts with the requested one.
+     *
+     * Defense against the BCH/BSV-class attack: a peer serving honest
+     * blocks from a fork or a different network would pass hash
+     * verification against their own kaspad, but mixing those blocks
+     * into our store would silently corrupt the archive. The network
+     * tag is the cross-check that prevents this.
+     */
+    bindNetwork(networkName) {
+        if (!this._initialized) throw new Error('ShardStorage.init() not called');
+        if (!networkName || typeof networkName !== 'string') {
+            return { ok: false, error: 'invalid network name' };
+        }
+        const stmt = this.db.prepare(`SELECT value FROM meta WHERE key = 'network_id'`);
+        stmt.bind([]);
+        let existing = null;
+        if (stmt.step()) existing = stmt.getAsObject().value;
+        stmt.free();
+        if (existing == null) {
+            this.db.run(`INSERT INTO meta (key, value) VALUES ('network_id', ?)`, [networkName]);
+            this._markDirty();
+            this.emit('log', `Bound shard storage to network: ${networkName}`);
+            return { ok: true, bound: networkName };
+        }
+        if (existing !== networkName) {
+            this.emit('error', {
+                stage: 'network-bind',
+                error: `network mismatch: stored=${existing}, requested=${networkName} — refusing writes`,
+            });
+            return { ok: false, error: `network mismatch: stored=${existing} requested=${networkName}` };
+        }
+        return { ok: true, bound: existing };
+    }
+
+    /** Returns the stored network_id or null if not yet bound. */
+    getBoundNetwork() {
+        if (!this._initialized) return null;
+        try {
+            const stmt = this.db.prepare(`SELECT value FROM meta WHERE key = 'network_id'`);
+            stmt.bind([]);
+            const has = stmt.step();
+            const row = has ? stmt.getAsObject() : null;
+            stmt.free();
+            return row?.value || null;
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -160,9 +234,10 @@ class ShardStorage extends events_1.EventEmitter {
      * @param {number}             daaScore   block's DAA score
      * @param {Buffer|Uint8Array} bodyBytes  serialized block body
      * @param {boolean}            isAccepted whether the block is in the selected chain
+     * @param {number|null}        blueScore  block's blue score (null if unknown — old callers)
      * @returns {boolean}
      */
-    captureBlock(hashBytes, daaScore, bodyBytes, isAccepted = true) {
+    captureBlock(hashBytes, daaScore, bodyBytes, isAccepted = true, blueScore = null) {
         if (!this._initialized) throw new Error('ShardStorage.init() not called');
         if (!hashBytes || hashBytes.length !== 32) {
             throw new Error(`ShardStorage.captureBlock: invalid hash length ${hashBytes?.length}`);
@@ -173,8 +248,8 @@ class ShardStorage extends events_1.EventEmitter {
         const sizeBytes = bodyBytes.length;
         const capturedAt = Date.now();
         this.db.run(
-            `INSERT INTO blocks (hash, daa_score, body, size_bytes, captured_at, is_accepted) VALUES (?, ?, ?, ?, ?, ?)`,
-            [hashBytes, daaScore, bodyBytes, sizeBytes, capturedAt, isAccepted ? 1 : 0]
+            `INSERT INTO blocks (hash, daa_score, blue_score, body, size_bytes, captured_at, is_accepted) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [hashBytes, daaScore, blueScore, bodyBytes, sizeBytes, capturedAt, isAccepted ? 1 : 0]
         );
         // Update cached stats.
         this._stats.blockCount += 1;
@@ -334,6 +409,68 @@ class ShardStorage extends events_1.EventEmitter {
      */
     getStats() {
         return { ...this._stats };
+    }
+
+    /**
+     * The lowest DAA score this pool currently stores. Returned in
+     * /shard/dag-info as `pool_floor_daa` — explorer indexers use it to
+     * decide whether to bootstrap from this pool or fall back to an
+     * archival kaspad for older history.
+     * @returns {number | null}
+     */
+    getPoolFloorDaa() {
+        return this._stats.oldestDaa;
+    }
+
+    /**
+     * Look up the (blue_score, daa_score) of a known hash. Used by
+     * /shard/blocks to anchor the forward walk at a low_hash request.
+     * @param {Buffer|Uint8Array} hashBytes
+     * @returns {{blueScore: number|null, daaScore: number} | null}
+     */
+    getScoresByHash(hashBytes) {
+        if (!this._initialized) return null;
+        const stmt = this.db.prepare(`SELECT blue_score, daa_score FROM blocks WHERE hash = ?`);
+        stmt.bind([hashBytes]);
+        if (!stmt.step()) {
+            stmt.free();
+            return null;
+        }
+        const row = stmt.getAsObject();
+        stmt.free();
+        return { blueScore: row.blue_score, daaScore: row.daa_score };
+    }
+
+    /**
+     * Return up to `limit` blocks with blue_score strictly greater than
+     * `lowBlueScore`, in ascending blue_score order. The workhorse query
+     * for /shard/blocks. Skips rows where blue_score IS NULL (legacy
+     * pre-migration captures).
+     *
+     * @param {number} lowBlueScore exclusive lower bound
+     * @param {number} limit        max blocks to return (caller should cap at 500)
+     * @returns {Array<{hash: Uint8Array, blueScore: number, daaScore: number, body: Uint8Array}>}
+     */
+    getBlocksAfterBlueScore(lowBlueScore, limit = 100) {
+        if (!this._initialized) return [];
+        const stmt = this.db.prepare(
+            `SELECT hash, blue_score, daa_score, body FROM blocks
+             WHERE blue_score IS NOT NULL AND blue_score > ?
+             ORDER BY blue_score ASC LIMIT ?`
+        );
+        stmt.bind([lowBlueScore, limit]);
+        const out = [];
+        while (stmt.step()) {
+            const row = stmt.getAsObject();
+            out.push({
+                hash: row.hash,
+                blueScore: row.blue_score,
+                daaScore: row.daa_score,
+                body: row.body,
+            });
+        }
+        stmt.free();
+        return out;
     }
 
     /**
