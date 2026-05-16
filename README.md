@@ -34,6 +34,7 @@ When a block arrives from any source (live capture, another participant, a frien
 | Check | What it proves | Code |
 |---|---|---|
 | **Canonical re-serialization + BLAKE2b-256** (keyed `"BlockHash"`) | The header bytes the source sent actually hash to the block ID they're claiming. No swapping payloads. | `src/dist/main/kaspa-block-hash.js` (validated 5/5 against live mainnet blocks) |
+| **Body merkle root** (keyed `"TransactionHash"` + `"MerkleBranch"`) | The transaction list inside the block actually hashes to the `hashMerkleRoot` committed in the header. No swapping transactions, no editing amounts, no inserting fake outputs. **Validated bit-for-bit against all 8 of rusty-kaspa's in-tree canonical test vectors.** | `src/dist/main/kaspa-tx-hash.js` + `src/dist/main/kaspa-merkle.js` |
 | **Direct match against local kaspad** | If your local kaspad recognizes the hash, you're done — you've matched against a header your own PoW-validated node accepts. | `src/dist/main/shard-pull.js → verifyBlockHashAgainstKaspad` |
 | **Parent-chain walking** | For deep-history blocks your local kaspad has pruned: walk the block's `parentsByLevel` recursively until you hit a hash kaspad *does* recognize. If you reach a canonical ancestor in ≤100k hops, the block is anchored to PoW. If you don't, it's rejected. | `src/dist/main/parent-chain-walker.js` |
 | **DAA monotonicity + range contiguity** | The bucket the source is feeding you is contiguous and ordered. Cuts off pre-validation games. | `src/dist/main/shard-fill.js` |
@@ -245,7 +246,7 @@ These are non-negotiable design constraints, not just preferences. Full design i
 ## Roadmap
 
 - **v0.5** (current) — single-machine archival contribution + verification + audit. Works against a friend's archival kaspad.
-- **v0.5.4** — body merkle root verification (currently just header anchoring). ~300 LOC.
+- **v0.5.4** ✅ — body merkle root verification. Every block now verified at both header AND transaction level. Validated against all 8 of rusty-kaspa's canonical test vectors.
 - **v0.6** — peer discovery and bucket assignment go live on mainnet. The "100 virtual archive nodes" framing becomes real.
 - **v0.7** — explorer-backend mode: the pool can serve `simply-kaspa-indexer` queries via `/shard/*` endpoints, so the archival data becomes useful to explorer apps, not just durable.
 

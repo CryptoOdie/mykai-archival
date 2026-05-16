@@ -46,6 +46,8 @@ const PINNED = {
 // confirm `git status` is clean before trusting the build.
 const SECURITY_CRITICAL_FILES = [
     'src/dist/main/kaspa-block-hash.js',
+    'src/dist/main/kaspa-tx-hash.js',
+    'src/dist/main/kaspa-merkle.js',
     'src/dist/main/parent-chain-walker.js',
     'src/dist/main/shard-pull.js',
     'src/dist/main/shard-fill.js',

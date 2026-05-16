@@ -35,6 +35,7 @@ exports.DEFAULT_SEED_SOURCES = void 0;
 exports.DEFAULT_KASPAD_SEED_SOURCES = void 0;
 
 const { KaspadWRPCClient } = require('./kaspad-wrpc-client');
+const kaspaMerkle = require('./kaspa-merkle');
 
 /**
  * Hardcoded seed sources. The foundation runs at least one of these;
@@ -355,22 +356,39 @@ async function verifyBlockHashAgainstKaspad(monitor, hashHex) {
  * lookup only (v0.5.3 behavior).
  *
  * Verification order:
- *   1. Re-hash block.header → must match block's claimed hash
- *   2. If kaspad knows the hash → accept (recent + skeleton anchor case)
- *   3. If walker is provided → walk parent chain to a canonical anchor
- *   4. Otherwise → reject
+ *   1. Body merkle root → must match header.hashMerkleRoot
+ *      (v0.5.4: tx-level integrity, not just header anchoring)
+ *   2. Re-hash block.header → must match block's claimed hash
+ *   3. If kaspad knows the hash → accept (recent + skeleton anchor case)
+ *   4. If walker is provided → walk parent chain to a canonical anchor
+ *   5. Otherwise → reject
  */
 async function verifyBlockFull(monitor, block, walker) {
     if (!block?.header) return false;
     const claimedHash = block?.verboseData?.hash || block?.header?.hash;
     if (!claimedHash || !/^[0-9a-fA-F]{64}$/.test(claimedHash)) return false;
 
-    // Direct kaspad check (works for recent + skeleton anchors).
+    // 1. Body merkle: every block carries header.hashMerkleRoot which
+    //    commits to the full tx list. If transactions are present, the
+    //    root must match exactly. Tries post-Crescendo (with mass) first,
+    //    falls back to pre-Crescendo for older blocks. Mismatch = drop +
+    //    the caller will log all-blocks-rejected → hard strike on source.
+    if (Array.isArray(block.transactions) && block.transactions.length > 0) {
+        const claimedRoot = (block.header.hashMerkleRoot || '').toLowerCase();
+        if (claimedRoot.length !== 64) return false;
+        const post = kaspaMerkle.calcHashMerkleRoot(block.transactions, true).toLowerCase();
+        if (post !== claimedRoot) {
+            const pre = kaspaMerkle.calcHashMerkleRoot(block.transactions, false).toLowerCase();
+            if (pre !== claimedRoot) return false;
+        }
+    }
+
+    // 2-3. Direct kaspad check (works for recent + skeleton anchors).
     if (await verifyBlockHashAgainstKaspad(monitor, claimedHash)) {
         return true;
     }
 
-    // Fall back to chain-walking if a walker was provided.
+    // 4. Fall back to chain-walking if a walker was provided.
     if (walker && typeof walker.verify === 'function') {
         const result = await walker.verify(block);
         return result.verified === true;
