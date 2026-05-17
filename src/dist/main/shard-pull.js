@@ -369,17 +369,28 @@ async function verifyBlockFull(monitor, block, walker) {
     if (!claimedHash || !/^[0-9a-fA-F]{64}$/.test(claimedHash)) return false;
 
     // 1. Body merkle: every block carries header.hashMerkleRoot which
-    //    commits to the full tx list. If transactions are present, the
-    //    root must match exactly. Tries post-Crescendo (with mass) first,
-    //    falls back to pre-Crescendo for older blocks. Mismatch = drop +
-    //    the caller will log all-blocks-rejected → hard strike on source.
-    if (Array.isArray(block.transactions) && block.transactions.length > 0) {
+    //    commits to the full tx list. The check has TWO paths:
+    //      (a) transactions present → root must match exactly. Tries
+    //          post-Crescendo (with mass) first, falls back to pre-
+    //          Crescendo for older blocks.
+    //      (b) transactions absent or empty → claimed root must be
+    //          ZERO_HASH. A peer that serves a non-zero hashMerkleRoot
+    //          with no tx body is lying — without this branch they could
+    //          bypass tx-level verification entirely.
+    //    Mismatch = drop + caller logs all-blocks-rejected → hard strike.
+    {
         const claimedRoot = (block.header.hashMerkleRoot || '').toLowerCase();
         if (claimedRoot.length !== 64) return false;
-        const post = kaspaMerkle.calcHashMerkleRoot(block.transactions, true).toLowerCase();
-        if (post !== claimedRoot) {
-            const pre = kaspaMerkle.calcHashMerkleRoot(block.transactions, false).toLowerCase();
-            if (pre !== claimedRoot) return false;
+        const ZERO_ROOT = '0'.repeat(64);
+        const txs = Array.isArray(block.transactions) ? block.transactions : [];
+        if (txs.length === 0) {
+            if (claimedRoot !== ZERO_ROOT) return false;
+        } else {
+            const post = kaspaMerkle.calcHashMerkleRoot(txs, true).toLowerCase();
+            if (post !== claimedRoot) {
+                const pre = kaspaMerkle.calcHashMerkleRoot(txs, false).toLowerCase();
+                if (pre !== claimedRoot) return false;
+            }
         }
     }
 

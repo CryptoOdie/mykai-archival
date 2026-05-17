@@ -167,10 +167,10 @@ for (const rel of SECURITY_CRITICAL_FILES) {
 console.log('\nRuntime environment:');
 const nodeVersion = process.versions.node;
 const major = parseInt(nodeVersion.split('.')[0], 10);
-if (major >= 20 && major < 23) {
+if (major >= 20 && major < 25) {
     ok(`Node.js ${nodeVersion} (within supported range)`);
 } else {
-    note(`Node.js ${nodeVersion} (untested — package.json requires >=20 <23)`);
+    note(`Node.js ${nodeVersion} (untested — package.json requires >=20 <25)`);
 }
 
 // Summary

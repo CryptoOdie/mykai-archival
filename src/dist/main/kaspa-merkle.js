@@ -8,7 +8,7 @@
  *   2. Pad leaf count to next power of two; missing leaves are `None`.
  *   3. Build level by level: pair (i, i+1). If both None, parent is None.
  *      If left present, right missing → parent = merkleHash(left, ZERO_HASH).
- *   4. Internal node hash = BLAKE2b-256 keyed "MerkleBranch" over (left||right).
+ *   4. Internal node hash = BLAKE2b-256 keyed "MerkleBranchHash" over (left||right).
  *   5. Root = top of tree.
  *
  * The block's `header.hashMerkleRoot` commits to the merkle root of
@@ -41,7 +41,7 @@ function _nextPowerOfTwo(n) {
 }
 
 /**
- * Hash two 32-byte buffers under the MerkleBranch key.
+ * Hash two 32-byte buffers under the MerkleBranchHash key.
  * @param {Buffer} left
  * @param {Buffer} right
  * @returns {Buffer} 32 bytes

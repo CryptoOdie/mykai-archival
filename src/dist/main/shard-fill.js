@@ -497,7 +497,7 @@ class ShardFill extends events_1.EventEmitter {
                         return;
                     }
                     if (blocks.length > 0 && ingested === 0) {
-                        this._recordStrike(wssUrl, 'returned-blocks-all-rejected');
+                        this._recordStrike(wssUrl, 'returned-blocks-all-rejected', 'hard');
                     }
                 }
             } catch (err) {
@@ -522,7 +522,7 @@ class ShardFill extends events_1.EventEmitter {
                         return;
                     }
                     if (blocks.length > 0 && ingested === 0) {
-                        this._recordStrike(seedUrl, 'returned-blocks-all-rejected');
+                        this._recordStrike(seedUrl, 'returned-blocks-all-rejected', 'hard');
                     }
                 }
             } catch (err) {
@@ -581,13 +581,12 @@ class ShardFill extends events_1.EventEmitter {
      *    3. DAA-score monotonicity hint. Blocks arriving with daa_score
      *       below the bucket's expected floor are likely from a different
      *       range than claimed — log and skip.
-     *    4. TODO v0.5.4: merkle-root verification against header's
-     *       hash_merkle_root commitment. Closes CVE-2012-2459-class
-     *       transaction-substitution attacks. Deferred because it
-     *       requires implementing Kaspa's BLAKE2b-256-keyed tx hashing
-     *       + merkle tree in JS (~150 LOC, gated on kaspa-wasm review).
-     *       Until then: indexers MUST regenerate this themselves from
-     *       the canonical body bytes.
+     *    4. Body merkle-root verification (shipped v0.5.4): every block
+     *       with transactions has its hashMerkleRoot recomputed and
+     *       compared to the header commitment. See verifyBlockFull in
+     *       shard-pull.js. Closes CVE-2012-2459-class transaction-
+     *       substitution attacks. Validated against rusty-kaspa's 8
+     *       canonical test vectors + 8 live mainnet blocks.
      *
      *  `verify=false` for blocks pulled from local kaspad — those
      *  already passed kaspad's full consensus check. Skip the round
@@ -639,6 +638,15 @@ class ShardFill extends events_1.EventEmitter {
             }
             const daaScore = Number(block?.header?.daaScore ?? block?.header?.daa_score ?? 0);
             const blueScore = Number(block?.header?.blueScore ?? block?.header?.blue_score ?? 0);
+            // Reject any block whose DAA/blue scores aren't finite and
+            // non-negative — NaN or negative numbers would silently
+            // defeat the monotonicity check below (NaN comparisons are
+            // always false).
+            if (!Number.isFinite(daaScore) || daaScore < 0 ||
+                !Number.isFinite(blueScore) || blueScore < 0) {
+                rejected++;
+                continue;
+            }
             // Defense 3: DAA-score monotonicity. Within a range response
             // we expect non-decreasing DAA. Gross violations indicate
             // either reordering or chain-mixing — warn (not reject) and

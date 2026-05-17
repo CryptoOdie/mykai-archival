@@ -74,7 +74,22 @@ class KaspadWRPCClient extends events_1.EventEmitter {
 
     _handleMessage(data) {
         let msg;
-        try { msg = JSON.parse(data.toString()); }
+        try {
+            // Kaspa wRPC returns u64 fields as raw JSON numbers. Values
+            // above 2^53 lose precision in JSON.parse, which silently
+            // produces wrong block hashes when re-serialized. Pre-process
+            // the problem fields into strings so they survive parsing.
+            // Same trick rpc-monitor.js uses; ported here because this
+            // client is the production path for remote-archival pulls
+            // (Source 3 in shard-fill.js) which are exactly the source
+            // class we treat as untrusted.
+            let raw = data.toString();
+            const BIG_FIELDS = ['nonce', 'sequence', 'lockTime', 'mass', 'value', 'gas', 'daaScore', 'blueScore', 'timestamp'];
+            for (const f of BIG_FIELDS) {
+                raw = raw.replace(new RegExp(`"${f}":\\s*(\\d{16,})`, 'g'), `"${f}":"$1"`);
+            }
+            msg = JSON.parse(raw);
+        }
         catch { return; }
         // Kaspa wRPC response shape: { id, method, params: { ...data } }
         // or { id, error: { ... } }.

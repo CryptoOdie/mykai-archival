@@ -115,7 +115,9 @@ class ParentChainWalker {
 
         while (hops < this.maxHops) {
             // Get parents (flatten levels).
-            const parentLevels = current.header.parents || [];
+            // kaspad wRPC returns parents under `parents`; some shapes
+            // (and rest of this codebase) use `parentsByLevel`. Accept both.
+            const parentLevels = current.header.parents || current.header.parentsByLevel || [];
             const allParents = [];
             for (const lvl of parentLevels) {
                 const hashes = Array.isArray(lvl) ? lvl : (lvl?.parentHashes || []);
