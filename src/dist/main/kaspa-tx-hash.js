@@ -119,13 +119,36 @@ function _writeInput(parts, input, flags) {
 
 function _writeOutput(parts, output) {
     _writeU64LE(parts, output?.value ?? 0);
-    const spk = output?.scriptPublicKey || {};
-    _writeU16LE(parts, spk.version ?? 0);
-    // kaspad RPC names this `scriptPublicKey` (the bytes) inside the
-    // outer `scriptPublicKey` object — also seen as `script` in some
-    // shapes. Accept both.
-    const scriptHex = spk.scriptPublicKey || spk.script || '';
-    _writeVarBytes(parts, _hexToBuf(scriptHex));
+    // ScriptPublicKey appears in two shapes in the wild:
+    //   1. Object form (test vectors, some clients):
+    //      { version: u16, scriptPublicKey | script: hex }
+    //   2. Flat-string form (kaspad JSON wRPC live output):
+    //      "scriptPublicKey": "VVVVscriptBytesAsHex..."
+    //      where VVVV is the 2-byte BIG-ENDIAN u16 version prefix.
+    //      (Confirmed by inspecting live mainnet blocks: e.g. a
+    //       "PubKey" output starts with "0000" = version 0.)
+    const spk = output?.scriptPublicKey;
+    let version = 0;
+    let scriptBytes;
+    if (typeof spk === 'string') {
+        const clean = spk.startsWith('0x') ? spk.slice(2) : spk;
+        const buf = Buffer.from(clean, 'hex');
+        if (buf.length >= 2) {
+            version = (buf[0] << 8) | buf[1]; // big-endian u16 prefix
+            scriptBytes = buf.subarray(2);
+        } else {
+            scriptBytes = Buffer.alloc(0);
+        }
+    } else if (spk && typeof spk === 'object') {
+        version = spk.version ?? 0;
+        const hex = spk.scriptPublicKey || spk.script || '';
+        scriptBytes = _hexToBuf(hex);
+    } else {
+        scriptBytes = Buffer.alloc(0);
+    }
+    // Canonical hashing uses u16 LE for version.
+    _writeU16LE(parts, version);
+    _writeVarBytes(parts, scriptBytes);
 }
 
 function _writeTransaction(parts, tx, flags) {

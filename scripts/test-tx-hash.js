@@ -140,7 +140,7 @@ const allHashes = tests.map(t => t.hash);
 const root8 = bytesToHex(merkle.calcMerkleRoot(allHashes));
 console.log(`  merkle(8 vectors) = ${root8}`);
 // Pin once verified:
-const EXPECTED_ROOT_8 = 'b5f83ca0e51800dea53b52e5df2d374ead235b1590b5874dfce06180f4fbd94f';
+const EXPECTED_ROOT_8 = '779a4bcf2fcdc266253b939ed0e62b7a1d9161fb28c98d1576cca7ce8918f9b5';
 check('merkle(8) regression pin', EXPECTED_ROOT_8, root8);
 
 console.log('\n=============================================');

@@ -29,7 +29,7 @@ exports.ZERO_HASH = void 0;
 const { blake2b } = require('@noble/hashes/blake2.js');
 const txHash = require('./kaspa-tx-hash.js');
 
-const KEY_MERKLE_BRANCH = Buffer.from('MerkleBranch', 'utf-8');
+const KEY_MERKLE_BRANCH = Buffer.from('MerkleBranchHash', 'utf-8');
 const ZERO_HASH = Buffer.alloc(32);
 exports.ZERO_HASH = ZERO_HASH;
 

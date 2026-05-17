@@ -60,7 +60,7 @@ Every block you receive goes through this — no exceptions, no shortcuts:
 
 | Check | Proves | Code |
 |---|---|---|
-| **Body merkle root** (keyed `"TransactionHash"` + `"MerkleBranch"`) | The transaction list inside the block actually hashes to the `hashMerkleRoot` committed in the header. **No swapping txs, editing amounts, or inserting outputs.** Validated bit-for-bit against rusty-kaspa's 8 in-tree canonical test vectors. | `kaspa-tx-hash.js` + `kaspa-merkle.js` |
+| **Body merkle root** (keyed `"TransactionHash"` + `"MerkleBranchHash"`) | The transaction list inside the block actually hashes to the `hashMerkleRoot` committed in the header. **No swapping txs, editing amounts, or inserting outputs.** Validated against rusty-kaspa's 8 canonical test vectors AND against 5 live mainnet blocks (12-56 txs each) — bit-perfect. | `kaspa-tx-hash.js` + `kaspa-merkle.js` |
 | **Canonical header re-serialization + BLAKE2b-256** (keyed `"BlockHash"`) | The header bytes the source sent actually hash to the block ID they're claiming. Validated 5/5 against live mainnet blocks. | `kaspa-block-hash.js` |
 | **Direct match against local kaspad** | If your local PoW-validated kaspad already recognizes this hash, you're done. | `shard-pull.js → verifyBlockHashAgainstKaspad` |
 | **Parent-chain walking** | For deep-history blocks kaspad has pruned: walk parents recursively until you hit a hash kaspad *does* recognize. Anchor or reject. ≤100k hops, cycle-detected, LRU-cached. | `parent-chain-walker.js` |
